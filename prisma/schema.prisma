@@ -1,0 +1,831 @@
+// POOM — Visual automotive parts marketplace (MVP, demo data only)
+// Canonical money unit: integer IRR. Display converts to Toman in UI only.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── Users & Sellers ───────────────────────────
+
+enum UserRole {
+  CUSTOMER
+  SELLER
+  ADMIN
+}
+
+model User {
+  id          String     @id @default(cuid())
+  phone       String     @unique
+  role        UserRole   @default(CUSTOMER)
+  status      UserStatus @default(ACTIVE) // P2-E: suspension gates every authenticated action
+  lastLoginAt DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  orders      Order[]
+  seller      Seller?
+  sessions    Session[]
+
+  @@index([role])
+}
+
+// ─────────────────────────── Catalog: vehicles ───────────────────────────
+
+model Vehicle {
+  id            String           @id @default(cuid())
+  make          String
+  model         String
+  displayName   String
+  generation    String?
+  bodyType      BodyType?
+  active        Boolean          @default(true)
+  variants      VehicleVariant[]
+  engines       Engine[]
+  transmissions Transmission[]
+  zones         VehicleZone[]
+  fitments      Fitment[]
+  assets        Asset[]
+  garageEntries GarageVehicle[]
+
+  @@unique([make, model])
+}
+
+// Phase 2 (P2-C): engines/transmissions are entities (P2-B left them as free-text
+// variant labels). Codes are synthetic (DEMO) — no invented manufacturer identifiers.
+model Engine {
+  id            String           @id @default(cuid())
+  vehicleId     String
+  vehicle       Vehicle          @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  name          String
+  code          String?
+  descriptionFa String?
+  dataStatus    DataStatus       @default(DEMO)
+  active        Boolean          @default(true)
+  variants      VehicleVariant[]
+
+  @@unique([vehicleId, name])
+}
+
+model Transmission {
+  id         String           @id @default(cuid())
+  vehicleId  String
+  vehicle    Vehicle          @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  name       String
+  code       String?
+  dataStatus DataStatus       @default(DEMO)
+  active     Boolean          @default(true)
+  variants   VehicleVariant[]
+
+  @@unique([vehicleId, name])
+}
+
+enum BodyType {
+  HATCHBACK
+  SEDAN
+  WAGON
+  SUV
+  PICKUP
+  OTHER
+}
+
+model VehicleVariant {
+  id              String          @id @default(cuid())
+  vehicleId       String
+  vehicle         Vehicle         @relation(fields: [vehicleId], references: [id])
+  trim            String
+  engineId        String?
+  engineRef       Engine?         @relation(fields: [engineId], references: [id])
+  transmissionId  String?
+  transmissionRef Transmission?   @relation(fields: [transmissionId], references: [id])
+  // Legacy free-text labels (P2-B demo data). Kept in sync by seed; fitment rules
+  // created before P2-C store constraint text here.
+  engine          String?
+  transmission    String?
+  productionStart Int?
+  productionEnd   Int?
+  notes           String?
+  fitments        Fitment[]
+  garageEntries   GarageVehicle[]
+
+  @@unique([vehicleId, trim])
+  @@index([engineId])
+  @@index([transmissionId])
+}
+
+model VehicleZone {
+  id           String        @id @default(cuid())
+  vehicleId    String
+  vehicle      Vehicle       @relation(fields: [vehicleId], references: [id])
+  key          String
+  title        String
+  description  String?
+  sortOrder    Int           @default(0)
+  assemblies   Assembly[]
+  meshMappings MeshMapping[]
+
+  @@unique([vehicleId, key])
+}
+
+model Assembly {
+  id           String        @id @default(cuid())
+  zoneId       String
+  zone         VehicleZone   @relation(fields: [zoneId], references: [id])
+  parentId     String?
+  title        String
+  slug         String        @unique
+  parts        Part[]
+  meshMappings MeshMapping[]
+  children     Assembly[]    @relation("AssemblyParent")
+  parent       Assembly?     @relation("AssemblyParent", fields: [parentId], references: [id])
+}
+
+// ─────────────────────────── Catalog: parts & identity ───────────────────────────
+
+enum PartCondition {
+  NEW
+  USED
+  REFURBISHED
+}
+
+enum IdentifierType {
+  OEM
+  MPN
+  CROSS_REFERENCE
+  GTIN
+  BARCODE
+  SELLER_SKU
+}
+
+enum DataStatus {
+  DEMO // synthetic data — must be visibly labeled in UI
+  VERIFIED // backed by a legitimate source
+  UNVERIFIED // plausible but unconfirmed
+  REVIEW_REQUIRED // imported via pipeline; awaiting admin review (P2-F)
+  DEPRECATED // withdrawn/superseded; hidden from new storefront surfaces (P2-F)
+}
+
+enum RelatedPartType {
+  RELATED
+  REPLACEMENT // only when data explicitly supports interchange
+  REQUIRES // assembly companion (e.g. gasket with the part)
+  OFTEN_PURCHASED_WITH
+}
+
+model Category {
+  id            String     @id @default(cuid())
+  parentId      String?
+  parent        Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children      Category[] @relation("CategoryTree")
+  slug          String     @unique
+  titleFa       String
+  descriptionFa String?
+  sortOrder     Int        @default(0)
+  active        Boolean    @default(true)
+  parts         Part[]
+
+  @@index([parentId])
+}
+
+model Brand {
+  id      String  @id @default(cuid())
+  name    String
+  slug    String  @unique
+  logoUrl String?
+  active  Boolean @default(true)
+  parts   Part[]
+}
+
+model Part {
+  id                   String           @id @default(cuid())
+  sku                  String           @unique
+  title                String
+  titleEn              String? // Latin name (F3): real parts carry it when the source states it
+  slug                 String           @unique
+  technicalDescription String?
+  assemblyId           String?
+  assembly             Assembly?        @relation(fields: [assemblyId], references: [id])
+  condition            PartCondition    @default(NEW)
+  active               Boolean          @default(true)
+  // authenticityStatus intentionally left free-form + DEMO flag; no fake certifications:
+  authenticityNote     String?
+  // Phase 2 (P2-B): data provenance + structured classification
+  dataStatus           DataStatus       @default(DEMO)
+  // P2-F (F3/F5): provenance of canonical catalog data. All nullable — absence
+  // is honest (unknown), never fabricated.
+  sourceRef            String? // internal batch reference, e.g. "catalog-206-import-001"
+  sourceUrl            String? // where the data came from (public; per-row in ImportRow too)
+  sourceUpdatedAt      DateTime? // when the source was last checked
+  verifiedAt           DateTime? // when an admin verified the row
+  verifiedBy           String? // admin user id
+  dataNotes            String? // free-form provenance notes
+  dataVersion          Int              @default(1) // bumped on verified-data overwrite attempts
+  specificationsJson   Json? // free-form per-category spec bag {diameter, material, position, …}
+  categoryId           String?
+  category             Category?        @relation(fields: [categoryId], references: [id])
+  brandId              String?
+  brand                Brand?           @relation(fields: [brandId], references: [id])
+  mainImage            String?
+  gallery              String[]
+  identifiers          PartIdentifier[]
+  fitments             Fitment[]
+  offers               Offer[]
+  meshMappings         MeshMapping[]
+  relatedFrom          RelatedPart[]    @relation("RelatedSource")
+  relatedTo            RelatedPart[]    @relation("RelatedTarget")
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  @@index([categoryId])
+  @@index([brandId])
+}
+
+model PartIdentifier {
+  id     String         @id @default(cuid())
+  partId String
+  part   Part           @relation(fields: [partId], references: [id], onDelete: Cascade)
+  type   IdentifierType
+  value  String
+
+  @@unique([partId, type, value])
+  @@index([value]) // identifier lookup (Search 2.0 builds on this)
+}
+
+// ─────────────────────────── P2-F (F5): catalog import pipeline ───────────────────────────
+// RAW → NORMALIZED → VALIDATED → APPROVED/REJECTED; rows never touch Part directly.
+// ImportRow keeps the full original + normalized payload for auditability.
+
+model ImportBatch {
+  id           String          @id @default(cuid())
+  label        String // human reference, e.g. "catalog-206-import-001"
+  sourceRef    String // provenance: dataset identifier
+  sourceUrl    String? // optional public URL of the source
+  sourceUpdatedAt DateTime? // provenance: when the SOURCE dataset was last known-current (from the source itself — never inferred)
+  status       ImportStatus    @default(DRAFT)
+  format       String          @default("csv")
+  createdBy    String? // admin user id
+  createdAt    DateTime        @default(now())
+  committedAt  DateTime?
+  rows         ImportRow[]
+
+  @@unique([label])
+  @@index([status])
+}
+
+model ImportRow {
+  id             String        @id @default(cuid())
+  batchId        String
+  batch          ImportBatch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  rowNumber      Int
+  rawJson        Json // exactly as received — never edited
+  normalizedJson Json? // parsed payload after normalization
+  status         RowStatus     @default(RAW)
+  problems       String[] // validation problems (Persian-safe codes)
+  externalKey    String? // stable business key from the source (e.g. slug or SKU)
+  matchedPartId  String? // resolved Part for update/deprecate decisions
+  action         ImportAction? // decided outcome when the batch is reviewed
+
+  @@unique([batchId, rowNumber])
+  @@index([batchId, status])
+  @@index([externalKey])
+}
+
+enum ImportStatus {
+  DRAFT
+  VALIDATED
+  APPROVED
+  REJECTED
+  COMMITTED
+  FAILED
+}
+
+enum RowStatus {
+  RAW
+  NORMALIZED
+  VALID
+  INVALID
+  APPROVED
+  REJECTED
+  APPLIED
+}
+
+enum ImportAction {
+  CREATE
+  UPDATE
+  DEPRECATE
+  UNCHANGED
+  CONFLICT
+}
+
+model RelatedPart {
+  id            String          @id @default(cuid())
+  partId        String
+  part          Part            @relation("RelatedSource", fields: [partId], references: [id], onDelete: Cascade)
+  relatedPartId String
+  relatedPart   Part            @relation("RelatedTarget", fields: [relatedPartId], references: [id], onDelete: Cascade)
+  type          RelatedPartType @default(RELATED)
+  noteFa        String?
+
+  @@unique([partId, relatedPartId, type])
+  @@index([relatedPartId])
+}
+
+// ─────────────────────────── Fitment (separate from commerce) ───────────────────────────
+
+enum FitmentStatus {
+  CONFIRMED
+  PARTIAL
+  REJECTED
+  PENDING_REVIEW
+}
+
+// Phase 2 (P2-B): resolution semantics —
+//   CONFIRMED → COMPATIBLE · PARTIAL/PENDING_REVIEW → REVIEW_REQUIRED · REJECTED → INCOMPATIBLE
+model Fitment {
+  id            String          @id @default(cuid())
+  partId        String
+  part          Part            @relation(fields: [partId], references: [id], onDelete: Cascade)
+  vehicleId     String
+  vehicle       Vehicle         @relation(fields: [vehicleId], references: [id])
+  variantId     String?
+  variant       VehicleVariant? @relation(fields: [variantId], references: [id])
+  engine        String? // optional constraint, matched against variant.engine
+  transmission  String? // optional constraint, matched against variant.transmission
+  bodyType      String? // optional constraint, matched against vehicle.bodyType
+  yearFrom      Int? // inclusive, open-ended when null (same calendar as variant.productionStart — Gregorian in demo data)
+  yearTo        Int?
+  fitmentStatus FitmentStatus   @default(PENDING_REVIEW)
+  fitmentNote   String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([partId, vehicleId, variantId])
+  @@index([fitmentStatus]) // moderation queue
+  @@index([vehicleId])
+}
+
+// DB conflict guard (NULLS NOT DISTINCT — added in migration 20260914_p2b_catalog_fitment):
+// two rows for the same (part, vehicle, variant, engine, transmission, bodyType, yearFrom, yearTo)
+// are impossible, so the same dimensions cannot carry both COMPATIBLE and INCOMPATIBLE.
+
+// ─────────────────────────── Marketplace: sellers & offers ───────────────────────────
+
+model Seller {
+  id           String           @id @default(cuid())
+  businessName String
+  ownerName    String?
+  phone        String?
+  city         String?
+  address      String?
+  status       String           @default("DEMO_UNVERIFIED") // P2-E: governed via sellerStatus below (legacy string kept for Phase-1 UI)
+  sellerStatus SellerStatus     @default(ACTIVE) // P2-E governance enum; migration maps DEMO_UNVERIFIED→ACTIVE
+  rating       Float            @default(0)
+  responseRate Float            @default(0)
+  verified     Boolean          @default(false)
+  // P2-G: seller origin — real sellers arrive through /seller/apply onboarding;
+  // seeded demo sellers keep this false so the customer UI can label them honestly.
+  isRealSeller Boolean          @default(false)
+  // P2-D: owner login (session→User→Seller). User owns profile *editable* fields;
+  // verified/rating/status remain admin-controlled (see PHASE2-D-SECURITY.md).
+  userId       String?          @unique
+  user         User?            @relation(fields: [userId], references: [id])
+  offers       Offer[]
+  orders       SellerOrder[]
+  eventLogs    SellerEventLog[]
+}
+
+// P2-D audit + observability: every seller mutation lands here (safe metadata
+// only — never secrets/payment data). Written inside the same transaction as
+// the mutation it describes.
+model SellerEventLog {
+  id        String   @id @default(cuid())
+  sellerId  String
+  seller    Seller   @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  actor     String // userId or "system"
+  event     String // e.g. seller_offer_price_updated
+  entity    String // "Offer" | "SellerOrder" | "Seller" | "CsvImport"
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([sellerId, createdAt])
+  @@index([event])
+}
+
+model Offer {
+  id                String        @id @default(cuid())
+  sellerId          String
+  seller            Seller        @relation(fields: [sellerId], references: [id])
+  partId            String
+  part              Part          @relation(fields: [partId], references: [id], onDelete: Cascade)
+  price             Int
+  compareAtPrice    Int?
+  stock             Int
+  lowStockThreshold Int           @default(3)
+  shippingDays      Int           @default(2)
+  // P2-D: shipping estimate range (min ≤ max). Legacy single `shippingDays` is
+  // kept in sync by the seller services; customer UI reads it unchanged.
+  shippingDaysMin   Int?
+  shippingDaysMax   Int?
+  // P2-D freshness: separate price/stock update timestamps (updatedAt covers all).
+  stockUpdatedAt    DateTime?
+  priceUpdatedAt    DateTime?
+  sellerSku         String?
+  condition         PartCondition @default(NEW)
+  warrantyNote      String? // DEMO text only; no invented certifications
+  active            Boolean       @default(true)
+  updatedAt         DateTime      @updatedAt
+
+  items     OrderItem[]
+  cartItems CartItem[]
+
+  @@index([partId, active])
+  @@index([sellerId, active])
+  @@index([sellerId, updatedAt])
+  // P2-G audit fix (M-1): a seller's own SKU identifies exactly one listing.
+  // CSV inventory import matches rows by seller_sku, so duplicate SKUs make an
+  // import ambiguous (it would silently update the wrong listing). Postgres
+  // treats NULLs as distinct in unique indexes, so SKU-less offers stay
+  // unlimited while non-null SKUs are unique per seller.
+  @@unique([sellerId, sellerSku])
+}
+
+// ─────────────────────────── Commerce: cart (server is source of truth) ───────────────────────────
+
+model Cart {
+  id        String     @id @default(cuid())
+  sessionId String     @unique
+  items     CartItem[]
+  updatedAt DateTime   @updatedAt
+}
+
+model CartItem {
+  id       String @id @default(cuid())
+  cartId   String
+  cart     Cart   @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  offerId  String
+  offer    Offer  @relation(fields: [offerId], references: [id])
+  quantity Int
+
+  @@unique([cartId, offerId])
+}
+
+// ─────────────────────────── Orders: parent + per-seller suborders ───────────────────────────
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  CANCELLED
+  FULFILLED
+}
+
+enum SellerOrderStatus {
+  PENDING
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model Order {
+  id            String        @id @default(cuid())
+  orderNumber   String        @unique
+  userId        String?
+  user          User?         @relation(fields: [userId], references: [id])
+  sessionId     String? // guest ownership via cookie session
+  status        OrderStatus   @default(PENDING_PAYMENT)
+  total         Int
+  shippingTotal Int           @default(0)
+  paymentStatus PaymentStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
+  sellerOrders  SellerOrder[]
+  payments      Payment[]
+}
+
+model SellerOrder {
+  id       String            @id @default(cuid())
+  orderId  String
+  order    Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sellerId String
+  seller   Seller            @relation(fields: [sellerId], references: [id])
+  status   SellerOrderStatus @default(PENDING)
+  subtotal Int
+  shipping Int               @default(0)
+  items    OrderItem[]
+  shipment Shipment?
+
+  @@index([sellerId, status])
+}
+
+model OrderItem {
+  id                 String          @id @default(cuid())
+  sellerOrderId      String
+  sellerOrder        SellerOrder     @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+  partId             String
+  offerId            String
+  offer              Offer           @relation(fields: [offerId], references: [id])
+  quantity           Int
+  unitPrice          Int
+  total              Int
+  // P2-E §40–41 snapshots: historical evidence must not change when catalog
+  // titles/offer SKUs change later. Backfilled from live relations.
+  partTitleSnapshot  String?
+  partSkuSnapshot    String?
+  sellerSkuSnapshot  String?
+  sellerNameSnapshot String?
+  returnRequests     ReturnRequest[]
+}
+
+// ─────────────────────────── Payments (adapter-based) ───────────────────────────
+
+model Payment {
+  id        String           @id @default(cuid())
+  orderId   String
+  order     Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider  String           @default("mock")
+  amount    Int
+  status    PaymentStatus    @default(PENDING)
+  authority String?          @unique
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  attempts  PaymentAttempt[]
+}
+
+// ─────────────────────────── 3D layer: Asset Contract ───────────────────────────
+
+model Asset {
+  id          String         @id @default(cuid())
+  assetId     String         @unique // e.g. peugeot-206-main-v1
+  vehicleId   String?
+  vehicle     Vehicle?       @relation(fields: [vehicleId], references: [id])
+  format      String         @default("glb")
+  source      String         @default("DEMO_PRIMITIVES") // no external asset claims
+  licenseNote String         @default("DEMO — in-repo primitive geometry, no third-party asset")
+  versions    AssetVersion[]
+}
+
+enum AssetVersionStatus {
+  DRAFT
+  PROCESSING
+  READY
+  ACTIVE
+  ARCHIVED
+  REJECTED
+}
+
+/// Phase 2 (P2-A): versioned, licensable 3D assets.
+/// builtin:placeholder geometry and uploaded GLB files share one model.
+model AssetVersion {
+  id              String             @id @default(cuid())
+  assetId         String
+  asset           Asset              @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  version         Int
+  status          AssetVersionStatus @default(DRAFT)
+  // File info — builtin geometry has filePath `builtin:*`, no physical file.
+  filePath        String             @default("builtin:placeholder-206")
+  fileUrl         String?
+  previewUrl      String?
+  fileSize        Int?
+  mimeType        String?
+  checksumSha256  String?
+  // Licensing metadata (mandatory before any commercial use)
+  licenseType     String?
+  licenseUrl      String?
+  sourceUrl       String?
+  creator         String?
+  attributionText String?
+  commercialUse   Boolean            @default(false)
+  // P2-F (F1): full provenance — a real asset must answer where it came from,
+  // what was changed, and what it may be used for. Validated before READY.
+  acquiredAt      DateTime? // when the file was obtained/produced
+  modifications   String? // what was altered after acquisition (null = none declared)
+  intendedUsage   String? // e.g. "product viewer" — declared scope of use
+  createdAt       DateTime           @default(now())
+  activatedAt     DateTime?
+  meshMappings    MeshMapping[]
+
+  @@unique([assetId, version])
+  @@index([assetId, status])
+}
+
+// Phase 2 (P2-A): one unified, version-scoped mesh mapping table.
+// A mapping targets exactly one of zone/assembly/part — enforced in the service layer.
+model MeshMapping {
+  id        String       @id @default(cuid())
+  versionId String
+  version   AssetVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  meshName  String // stable name from the 3D scene, e.g. zone_engine / part_radiator_main
+  kind      String       @default("zone") // zone | assembly | part
+
+  zoneId     String?
+  zone       VehicleZone? @relation(fields: [zoneId], references: [id])
+  assemblyId String?
+  assembly   Assembly?    @relation(fields: [assemblyId], references: [id])
+  partId     String?
+  part       Part?        @relation(fields: [partId], references: [id])
+
+  label              String? // fa label for hotspot
+  hotspotJson        Json? // [x,y,z] in model space
+  cameraPositionJson Json?
+  cameraTargetJson   Json?
+  explodedOffsetJson Json? // [dx,dy,dz] applied in exploded view
+  sortOrder          Int      @default(0)
+  metadataJson       Json? // mapping studio free-form extras
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([versionId, meshName])
+  @@index([versionId, kind])
+  @@index([zoneId])
+  @@index([assemblyId])
+  @@index([partId])
+}
+
+// Phase 2 (P2-C): Vehicle Garage — saved vehicles per guest session (userId ready for post-auth).
+// One active vehicle per session: enforced by partial unique index
+//   CREATE UNIQUE INDEX ... ON "GarageVehicle"("sessionId") WHERE "isActive"
+// (migration 20260914_p2c_vehicle_config — partial indexes are not expressible in Prisma DSL).
+/// P2-C analytics: coarse search/garage funnel events. No PII — sessionId is a
+/// random cookie id, query text is user-typed search only.
+model SearchEvent {
+  id          String   @id @default(cuid())
+  sessionId   String
+  type        String // search_submitted | search_result_clicked | vehicle_saved | vehicle_activated | vehicle_removed | garage_opened
+  query       String?
+  resultCount Int?
+  vehicleId   String?
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([type, createdAt])
+}
+
+model GarageVehicle {
+  id        String         @id @default(cuid())
+  sessionId String
+  userId    String?
+  variantId String
+  variant   VehicleVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  year      Int? // Gregorian build year (user-entered); yearFa kept for legacy display
+  yearFa    Int? // legacy Jalali year (demo, user-entered)
+  nickname  String?
+  plate     String?
+  isActive  Boolean        @default(false)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @default(now()) @updatedAt
+  vehicle   Vehicle?       @relation(fields: [vehicleId], references: [id])
+  vehicleId String?
+
+  @@index([sessionId])
+  @@index([userId])
+}
+
+// ═══════════════════════════ P2-E: production hardening ═══════════════════════════
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+  DISABLED
+}
+
+enum SellerStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
+enum ShipmentStatus {
+  PENDING
+  READY_TO_SHIP
+  SHIPPED
+  DELIVERED
+  RETURNED
+}
+
+enum ReturnStatus {
+  REQUESTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  RECEIVED
+  REFUND_PENDING
+  REFUNDED
+  CANCELLED
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+/// Server-side session store (P2-E §10). The cookie carries a random token;
+/// only its sha256 hash is stored. Guest `poom_sid` (cart/garage) is separate.
+model Session {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// Payment attempt ledger (P2-E §23): retries create NEW rows; history is
+/// immutable. `idempotencyKey` makes callback processing safely repeatable.
+model PaymentAttempt {
+  id             String        @id @default(cuid())
+  paymentId      String
+  payment        Payment       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  attemptNumber  Int
+  provider       String
+  amountIrr      Int
+  status         PaymentStatus @default(PENDING)
+  authority      String?       @unique
+  referenceId    String?       @unique
+  idempotencyKey String        @unique
+  failureCode    String?
+  failureMessage String?
+  createdAt      DateTime      @default(now())
+  completedAt    DateTime?
+
+  @@unique([paymentId, attemptNumber])
+}
+
+/// Shipment foundation (P2-E §32): one per SellerOrder for now; a real carrier
+/// adapter arrives in a later phase. carrier is DEMO until then.
+model Shipment {
+  id                    String         @id @default(cuid())
+  sellerOrderId         String         @unique
+  sellerOrder           SellerOrder    @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade)
+  carrier               String         @default("DEMO")
+  trackingCode          String?
+  shippingMethod        String         @default("STANDARD")
+  shippingCostIrr       Int            @default(0)
+  estimatedDeliveryFrom DateTime?
+  estimatedDeliveryTo   DateTime?
+  status                ShipmentStatus @default(PENDING)
+  shippedAt             DateTime?
+  deliveredAt           DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+}
+
+/// Configurable return policy (P2-E §36, §69): values are DEMO placeholders —
+/// `needsLegalVerification` must be cleared only after policy/legal review.
+model ReturnPolicy {
+  id                     String  @id @default(cuid())
+  name                   String
+  returnWindowDays       Int     @default(7)
+  requiresDelivered      Boolean @default(true)
+  allowOpened            Boolean @default(false)
+  needsLegalVerification Boolean @default(true)
+  noteFa                 String?
+  active                 Boolean @default(true)
+}
+
+model ReturnRequest {
+  id           String       @id @default(cuid())
+  orderItemId  String
+  orderItem    OrderItem    @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  userId       String?
+  sessionId    String?
+  reason       String
+  notes        String?
+  status       ReturnStatus @default(REQUESTED)
+  decisionNote String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  refund       Refund?
+}
+
+/// Refund foundation (P2-E §38): payment-state representation only —
+/// NO live financial integration and never a fabricated success.
+model Refund {
+  id               String        @id @default(cuid())
+  returnRequestId  String        @unique
+  returnRequest    ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  paymentAttemptId String?
+  amountIrr        Int
+  status           RefundStatus  @default(PENDING)
+  providerRef      String?
+  failureReason    String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}

@@ -1,0 +1,14 @@
+node_modules
+.npmcache
+.next
+out
+.env*.local
+.env
+*.tsbuildinfo
+next-env.d.ts
+prisma/migrations/dev.db*
+tmp-loop-logs/
+logs/
+*.log
+Thumbs.db
+desktop.ini
