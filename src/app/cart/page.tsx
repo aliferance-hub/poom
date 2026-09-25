@@ -4,6 +4,7 @@ import { getSessionId } from "@/lib/session";
 import { formatToman, toPersianDigits } from "@/lib/persian";
 import { updateCartItemAction, removeCartItemAction } from "@/app/actions";
 import { getVehicleWithVariants } from "@/lib/catalog";
+import { sellerOriginLabelFa } from "@/lib/seller/seller-trust-label";
 
 export default async function CartPage() {
   const sid = await getSessionId();
@@ -35,7 +36,9 @@ export default async function CartPage() {
                     {line.offer.part.title}
                   </Link>
                   <div className="mt-0.5 text-[11px] text-black/50">
-                    {line.offer.seller.businessName} · DEMO · {formatToman(line.unitPrice)}
+                    {/* P2-G.1 fix (audit M-4): origin label is derived from authoritative
+                        state — the real seller's cart line no longer claims "DEMO". */}
+                    {line.offer.seller.businessName} · {sellerOriginLabelFa(line.offer.seller)} · {formatToman(line.unitPrice)}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

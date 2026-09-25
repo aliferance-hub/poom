@@ -14,10 +14,13 @@ async function assetId(): Promise<string> {
 }
 
 let createdVersionIds: string[] = [];
+let preExistingActiveId: string | null = null;
 
 beforeAll(async () => {
   const count = await prisma.asset.count();
   if (count === 0) throw new Error("seed missing");
+  const asset = await prisma.asset.findUniqueOrThrow({ where: { assetId: "peugeot-206-main-v1" } });
+  preExistingActiveId = (await prisma.assetVersion.findFirst({ where: { assetId: asset.id, status: "ACTIVE" } }))?.id ?? null;
 });
 
 afterAll(async () => {
@@ -25,12 +28,23 @@ afterAll(async () => {
   for (const id of createdVersionIds) {
     await prisma.assetVersion.deleteMany({ where: { id, status: { notIn: ["ACTIVE"] } } }).catch(() => {});
   }
-  // ensure v1 stays ACTIVE for the app
+  // restore whichever version was ACTIVE before this file ran — the app's active
+  // asset is data, not a test fixture (v2 is the shipped engineering GLB; v1 is
+  // only the fallback placeholder).
   const asset = await prisma.asset.findUniqueOrThrow({ where: { assetId: "peugeot-206-main-v1" } });
-  const v1 = await prisma.assetVersion.findUniqueOrThrow({ where: { assetId_version: { assetId: asset.id, version: 1 } } });
-  if (v1.status !== "ACTIVE") {
-    await prisma.assetVersion.updateMany({ where: { assetId: asset.id, status: "ACTIVE" }, data: { status: "ARCHIVED" } });
-    await prisma.assetVersion.update({ where: { id: v1.id }, data: { status: "ACTIVE", activatedAt: new Date() } });
+  if (preExistingActiveId) {
+    const active = await prisma.assetVersion.findFirst({ where: { assetId: asset.id, status: "ACTIVE" } });
+    if (!active || active.id !== preExistingActiveId) {
+      await prisma.assetVersion.updateMany({ where: { assetId: asset.id, status: "ACTIVE" }, data: { status: "ARCHIVED" } });
+      await prisma.assetVersion.update({ where: { id: preExistingActiveId }, data: { status: "ACTIVE", activatedAt: new Date() } });
+    }
+  } else {
+    // legacy fallback: no pre-captured active → keep v1 ACTIVE (original behavior)
+    const v1 = await prisma.assetVersion.findUniqueOrThrow({ where: { assetId_version: { assetId: asset.id, version: 1 } } });
+    if (v1.status !== "ACTIVE") {
+      await prisma.assetVersion.updateMany({ where: { assetId: asset.id, status: "ACTIVE" }, data: { status: "ARCHIVED" } });
+      await prisma.assetVersion.update({ where: { id: v1.id }, data: { status: "ACTIVE", activatedAt: new Date() } });
+    }
   }
   await prisma.$disconnect();
 });
@@ -149,8 +163,10 @@ describe("Asset Contract v2 (from MeshMapping)", () => {
     const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { model: "206" } });
     const c = await resolveContract(vehicle.id);
     expect(c).not.toBeNull();
-    expect(c!.versionNumber).toBe(1);
-    expect(c!.license.licenseType).toBe("IN_REPO_DEMO");
+    // The active version is data (v1 placeholder or v2 engineering GLB) — assert
+    // the contract SHAPE, not which version happens to be activated.
+    expect(c!.versionNumber).toBeGreaterThanOrEqual(1);
+    expect(c!.license.licenseType).toBeTruthy();
     expect(c!.zones.length).toBe(8);
     const cooling = c!.zones.find((z) => z.zoneKey === "cooling")!;
     expect(cooling.meshName).toBe("zone_cooling");

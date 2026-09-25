@@ -81,8 +81,18 @@ describe("P2-F F10: real 206 dataset integrity", () => {
   });
 
   it("the three real engine-bay meshes resolve to the real imported parts", async () => {
+    // Per ACTIVE version: v2 duplicates the mapping rows (full mapping copy),
+    // so the table-wide count is 6 — the invariant is one triple per version.
+    const activeVersion = await prisma.assetVersion.findFirst({
+      where: { status: "ACTIVE" },
+      orderBy: { activatedAt: "desc" },
+      select: { id: true },
+    });
     const meshes = await prisma.meshMapping.findMany({
-      where: { meshName: { in: ["part_radiator_main", "part_oil_filter_main", "part_brake_pad_front_main"] } },
+      where: {
+        versionId: activeVersion!.id,
+        meshName: { in: ["part_radiator_main", "part_oil_filter_main", "part_brake_pad_front_main"] },
+      },
       include: { part: { select: { title: true, sourceRef: true, dataStatus: true } } },
     });
     expect(meshes.length).toBe(3);

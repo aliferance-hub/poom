@@ -3,6 +3,7 @@ import { getVehicleWithVariants, getZonesForVehicle, searchParts } from "@/lib/c
 import { getSessionId } from "@/lib/session";
 import { getActiveVehicleContext, vehicleContextLabel } from "@/lib/vehicle";
 import { toPersianDigits, formatToman } from "@/lib/persian";
+import { Blueprint206 } from "@/components/blueprint-206";
 
 export default async function HomePage() {
   const vehicle = await getVehicleWithVariants("Peugeot", "206");
@@ -14,13 +15,15 @@ export default async function HomePage() {
   return (
     <div className="space-y-8">
       <section className="card overflow-hidden">
-        <div className="flex flex-col items-start gap-6 bg-gradient-to-l from-[--color-graphite] to-[--color-graphite-2] p-8 text-white md:flex-row md:items-center">
-          <div className="flex-1 space-y-3">
-            <h1 className="text-2xl font-bold md:text-3xl">قطعه را روی ماشینت پیدا کن</h1>
-            <p className="text-white/70">
+        <div className="grid bg-gradient-to-l from-[var(--color-graphite)] to-[var(--color-graphite-2)] text-white lg:grid-cols-[1.1fr_1fr]">
+          <div className="space-y-4 p-8 lg:p-10">
+            <h1 className="text-2xl font-bold leading-relaxed md:text-3xl">
+              قطعه را روی ماشینت پیدا کن
+            </h1>
+            <p className="max-w-md text-white/70">
               خودرو را انتخاب کن، ناحیه را روی مدل سه‌بعدی ببین، قطعه را پیدا کن و بهترین پیشنهاد فروشنده‌ها را مقایسه کن.
             </p>
-            <div className="flex flex-wrap gap-2 pt-2">
+            <div className="flex flex-wrap gap-2 pt-1">
               <Link href="/vehicles/peugeot/206" className="btn-primary">خودرویت را انتخاب کن</Link>
               <Link href="/search" className="btn-ghost !border-white/20 !bg-white/10 !text-white">جستجوی قطعه</Link>
             </div>
@@ -30,9 +33,15 @@ export default async function HomePage() {
                 <Link href="/account/garage" className="underline"> تغییر</Link>
               </p>
             )}
+            {/* engineering blueprint — the 2D twin of the 3D model, same dimensions */}
+            <Blueprint206 className="mt-2 w-full max-w-md opacity-90" />
           </div>
-          <div className="grid w-full grid-cols-3 gap-2 text-center md:w-72" dir="rtl">
-            {[["۸", "ناحیه خودرو"], ["۴۱", "قطعه نمایشی"], ["۳", "فروشنده نمایشی"]].map(([n, l]) => (
+          <div className="grid grid-cols-3 gap-2 self-center p-6 text-center lg:grid-cols-1 lg:p-10" dir="rtl">
+            {[
+              ["۸", "ناحیهٔ فنی روی مدل سه‌بعدی"],
+              ["۴۱", "قطعه نمایشی"],
+              ["۳", "فروشنده نمایشی"],
+            ].map(([n, l]) => (
               <div key={l} className="rounded-lg bg-white/10 p-3">
                 <div className="text-lg font-bold">{n}</div>
                 <div className="text-[11px] text-white/60">{l}</div>

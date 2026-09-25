@@ -25,11 +25,21 @@ export function stockLabel(state: StockState): string {
  * Offers for a part with marketplace sorts; only active offers whose seller is
  * governance-ACTIVE are returned (P2-E §18: suspended/rejected sellers' offers
  * disappear from the customer marketplace immediately).
+ * P2-G.1: include only the seller trust fields the customer UI needs —
+ * identity/origin/verification come from live authoritative state (never
+ * snapshotted onto the offer at creation time).
  */
 export async function getOffersForPart(partId: string, sort: OfferSort = "best") {
   const offers = await prisma.offer.findMany({
     where: { partId, active: true, seller: { sellerStatus: "ACTIVE" } },
-    include: { seller: true },
+    include: {
+      seller: {
+        select: {
+          id: true, businessName: true, rating: true, // display
+          sellerOrigin: true, sellerVerificationStatus: true, sellerStatus: true, // trust axes (P2-G.1)
+        },
+      },
+    },
   });
 
   const rank: Record<StockState, number> = { in: 0, low: 1, out: 2 };

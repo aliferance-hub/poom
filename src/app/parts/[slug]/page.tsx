@@ -7,8 +7,11 @@ import { prisma } from "@/lib/prisma";
 async function prismaVehicle() {
   return prisma.vehicle.findFirst({ where: { make: "Peugeot", model: "206", active: true }, include: { variants: true } });
 }
-import { getPartBySlug, getRelatedParts, RELATED_TYPE_FA, IDENTIFIER_TYPE_FA } from "@/lib/catalog";
+import { getPartBySlug, getRelatedParts, getZonesForVehicle, RELATED_TYPE_FA, IDENTIFIER_TYPE_FA } from "@/lib/catalog";
+import { resolveContract } from "@/lib/asset-registry";
+import { VehicleViewer } from "@/components/viewer/vehicle-viewer";
 import { getOffersForPart, OFFER_SORTS, stockState, stockLabel, type OfferSort } from "@/lib/offers";
+import { sellerTrustSummaryFa, sellerVerificationBadgeFa } from "@/lib/seller/seller-trust-label";
 import { resolveFitment, fitmentPresentation, fitmentPresentationReason, FITMENT_FA, FITMENT_BADGE } from "@/lib/fitment";
 import { getSessionId } from "@/lib/session";
 import { getActiveVehicleContext } from "@/lib/vehicle";
@@ -54,6 +57,12 @@ export default async function PartPage({ params, searchParams }: Props) {
     getRelatedParts(part.id),
     prismaVehicle(),
   ]);
+
+  // ── 3D: the part shown in place on the car (contract-driven, ghost context) ──
+  const [contract, viewerZones] = vehicle
+    ? await Promise.all([resolveContract(vehicle.id), getZonesForVehicle(vehicle.id)])
+    : [null, []];
+  const focusPartMesh = contract?.parts.find((p) => p.partId === part.id)?.meshName ?? null;
 
   // ── Fitment via THE engine (single source of compatibility truth) ──
   // Context priority: ?variant=<trim>&year=<year> URL override → active garage
@@ -192,6 +201,21 @@ export default async function PartPage({ params, searchParams }: Props) {
 
       <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
         <section className="space-y-4">
+          {contract && viewerZones.length > 0 && (
+            <div className="card overflow-hidden">
+              <VehicleViewer
+                contract={contract}
+                zones={viewerZones.map((z) => ({ key: z.key, title: z.title, description: z.description }))}
+                focusPart={focusPartMesh}
+              />
+              {focusPartMesh && (
+                <div className="border-t border-black/8 px-4 py-2 text-[11px] text-black/50">
+                  این قطعه در جای خود روی ۲۰۶ — بقیهٔ خودرو به‌صورت شبح نمایش داده شده است. بچرخانید، بزرگ‌نمایی کنید، یا {""}
+                  <Link href="/vehicles/peugeot/206" className="text-[var(--color-accent)] underline">کل خودرو را ببینید</Link>.
+                </div>
+              )}
+            </div>
+          )}
           <div className="card p-4">
             <h2 className="mb-2 font-semibold">سازگاری با خودرو</h2>
             {fitmentSection}
@@ -272,8 +296,12 @@ export default async function PartPage({ params, searchParams }: Props) {
                           <span className={`badge ${st === "in" ? "bg-green-100 text-green-800" : st === "low" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-700"}`}>
                             {stockLabel(st)}
                           </span>
-                          {/* §71: trust only from authoritative state (verified flag + ACTIVE governance status) */}
-                          {o.seller.verified && o.seller.sellerStatus === "ACTIVE" && <span className="badge bg-blue-50 text-blue-700">فروشنده تأییدشده</span>}
+                          {/* P2-G.1: verification badge derived ONLY from authoritative state —
+                              an unverified real seller can never wear it (label module enforces). */}
+                          {(() => {
+                            const badge = sellerVerificationBadgeFa(o.seller);
+                            return badge ? <span className={`badge ${badge.className}`}>{badge.text}</span> : null;
+                          })()}
                         </div>
                       </div>
                       <div className="text-end">
@@ -285,11 +313,9 @@ export default async function PartPage({ params, searchParams }: Props) {
                     </div>
                     <div className="mt-2 flex items-center justify-between">
                       <span className="text-[10px] text-black/35">
-                        {/* P2-G: the label reflects the seller's real nature — demo
-                            sellers say so; onboarding sellers are shown as real. */}
-                        {(o.seller as { isRealSeller?: boolean }).isRealSeller
-                          ? "فروشنده واقعی"
-                          : "فروشنده نمایشی · داده‌ها DEMO هستند"}
+                        {/* P2-G.1: origin + verification derived from authoritative state
+                            (DEMO → demo label; REAL_ONBOARDING+UNVERIFIED → real, not verified). */}
+                        {sellerTrustSummaryFa(o.seller)}
                         {idx === 0 && activeSort === "best" ? " · بهترین پیشنهاد" : ""}
                       </span>
                       <AddToCartButton offerId={o.id} disabled={o.stock <= 0} back={`/parts/${part.slug}?sort=${activeSort}`} />

@@ -384,10 +384,26 @@ model Seller {
   sellerStatus SellerStatus     @default(ACTIVE) // P2-E governance enum; migration maps DEMO_UNVERIFIED→ACTIVE
   rating       Float            @default(0)
   responseRate Float            @default(0)
+  // P2-G.1: `verified` is a derived legacy flag, kept in sync with
+  // sellerVerificationStatus (verified ≡ VERIFIED). Do not read it in new code —
+  // the authoritative field is sellerVerificationStatus below.
   verified     Boolean          @default(false)
-  // P2-G: seller origin — real sellers arrive through /seller/apply onboarding;
-  // seeded demo sellers keep this false so the customer UI can label them honestly.
+  // P2-G: legacy origin flag (superseded by sellerOrigin, P2-G.1). Kept in sync
+  // (isRealSeller ≡ sellerOrigin = REAL_ONBOARDING) for historical compatibility;
+  // customer UI reads sellerOrigin only.
   isRealSeller Boolean          @default(false)
+  // P2-G.1: ORIGIN (how the seller entered the system) and VERIFICATION (the
+  // admin-recorded verification decision) are two independent axes. Neither
+  // implies the other: REAL_ONBOARDING does NOT mean VERIFIED, and ACTIVE
+  // (marketplace governance) does NOT mean VERIFIED. VERIFIED means exactly
+  // what setSellerVerificationStatus recorded — an admin's review decision,
+  // never a legal/business claim.
+  sellerOrigin             SellerOrigin             @default(DEMO)
+  sellerVerificationStatus SellerVerificationStatus @default(UNVERIFIED)
+  // Last verification decision evidence (set only by the admin verification flow).
+  verificationNote  String?
+  verificationActor String? // admin userId who recorded the last decision
+  verifiedAt        DateTime? // when the last decision was recorded
   // P2-D: owner login (session→User→Seller). User owns profile *editable* fields;
   // verified/rating/status remain admin-controlled (see PHASE2-D-SECURITY.md).
   userId       String?          @unique
@@ -451,6 +467,20 @@ model Offer {
   // treats NULLs as distinct in unique indexes, so SKU-less offers stay
   // unlimited while non-null SKUs are unique per seller.
   @@unique([sellerId, sellerSku])
+}
+
+// P2-G.1: seller trust axes (independent of each other and of SellerStatus).
+enum SellerOrigin {
+  DEMO // seeded demo entity — synthetic data, labeled as such everywhere
+  REAL_ONBOARDING // arrived through the /seller/apply onboarding flow
+  SYSTEM // audit-sentinel bookkeeping row ("audit-system") — never displayed as a seller
+}
+
+enum SellerVerificationStatus {
+  UNVERIFIED // no verification decision recorded (default)
+  PENDING_REVIEW // queued for admin review
+  VERIFIED // an admin recorded a verification decision IN THIS SYSTEM — no legal claim
+  REJECTED // an admin recorded a rejection decision
 }
 
 // ─────────────────────────── Commerce: cart (server is source of truth) ───────────────────────────

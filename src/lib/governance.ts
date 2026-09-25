@@ -70,6 +70,106 @@ export async function transitionSellerStatus(input: {
   }
 }
 
+// ───────────────────── Seller verification (P2-G.1) ─────────────────────
+// Verification is a THIRD axis, independent of origin (how the seller arrived)
+// and sellerStatus (marketplace governance). VERIFIED means exactly this: an
+// admin recorded a verification decision through this flow. It is NOT a legal
+// or business-registry claim and the UI must never word it as one.
+
+export const SELLER_VERIFICATION_TRANSITIONS: Record<string, string[]> = {
+  UNVERIFIED: ["PENDING_REVIEW", "VERIFIED", "REJECTED"],
+  PENDING_REVIEW: ["VERIFIED", "REJECTED", "UNVERIFIED"],
+  VERIFIED: ["UNVERIFIED", "REJECTED"], // revocation is explicit, never silent
+  REJECTED: ["UNVERIFIED", "PENDING_REVIEW"], // a fresh review can re-open
+};
+
+export function canTransitionSellerVerification(from: string, to: string): boolean {
+  return (SELLER_VERIFICATION_TRANSITIONS[from] ?? []).includes(to);
+}
+
+export type VerificationResult =
+  | { ok: true; sellerId: string; verificationStatus: "VERIFIED" | "PENDING_REVIEW" | "UNVERIFIED" | "REJECTED"; idempotent: boolean }
+  | { ok: false; reason: "NOT_FOUND" | "INVALID_TRANSITION" | "SELF_VERIFICATION" | "DB_CONFLICT"; detail?: string };
+
+/**
+ * Admin-only seller verification decision. The adminUserId is session-derived
+ * at the action layer (requireAdmin) — never accepted from a form field.
+ * Guards:
+ * - SELF_VERIFICATION: an admin cannot verify a seller they own (admins cannot
+ *   even onboard via applyAsSeller; this is the defence-in-depth backstop).
+ * - row-lock serializes concurrent decisions; the loser re-reads the committed
+ *   status, so concurrent approve/reject always end in one valid final state.
+ */
+export async function setSellerVerificationStatus(input: {
+  sellerId: string;
+  to: "VERIFIED" | "PENDING_REVIEW" | "UNVERIFIED" | "REJECTED";
+  adminUserId: string;
+  note?: string;
+}): Promise<VerificationResult> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "Seller" WHERE id = ${input.sellerId} FOR UPDATE
+      `;
+      if (locked.length === 0) return { ok: false as const, reason: "NOT_FOUND" as const };
+      const seller = await tx.seller.findUniqueOrThrow({
+        where: { id: input.sellerId },
+        select: { id: true, sellerVerificationStatus: true, userId: true, sellerOrigin: true },
+      });
+      if (seller.userId && seller.userId === input.adminUserId) {
+        return {
+          ok: false as const,
+          reason: "SELF_VERIFICATION" as const,
+          detail: "ادمین نمی‌تواند فروشگاه خودش را تأیید کند.",
+        };
+      }
+      if (seller.sellerVerificationStatus === input.to) {
+        return { ok: true as const, sellerId: seller.id, verificationStatus: input.to, idempotent: true };
+      }
+      if (!canTransitionSellerVerification(seller.sellerVerificationStatus, input.to)) {
+        return {
+          ok: false as const,
+          reason: "INVALID_TRANSITION" as const,
+          detail: `تغییر وضعیت تأیید از ${seller.sellerVerificationStatus} به ${input.to} مجاز نیست.`,
+        };
+      }
+      const now = new Date();
+      const decisionEvidence = input.to === "VERIFIED" || input.to === "REJECTED";
+      await tx.seller.update({
+        where: { id: seller.id },
+        data: {
+          sellerVerificationStatus: input.to,
+          // Legacy derived flag stays in sync (verified ≡ VERIFIED).
+          verified: input.to === "VERIFIED",
+          ...(decisionEvidence
+            ? { verifiedAt: now, verificationActor: input.adminUserId, verificationNote: input.note?.trim() || null }
+            : { verifiedAt: null, verificationActor: null, verificationNote: null }),
+        },
+      });
+      await tx.sellerEventLog.create({
+        data: {
+          sellerId: seller.id,
+          actor: input.adminUserId,
+          event: "seller_verification_changed",
+          entity: "Seller",
+          entityId: seller.id,
+          meta: {
+            from: seller.sellerVerificationStatus,
+            to: input.to,
+            origin: seller.sellerOrigin,
+            ...(input.note?.trim() ? { note: input.note.trim().slice(0, 200) } : {}),
+          },
+        },
+      });
+      return { ok: true as const, sellerId: seller.id, verificationStatus: input.to, idempotent: false };
+    });
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === "P2025" || code === "P2034") return { ok: false, reason: "DB_CONFLICT" };
+    throw e;
+  }
+}
+
 export async function getGovernanceList(filter: { status?: SellerStatus; q?: string }) {
   const where = {
     ...(filter.status ? { sellerStatus: filter.status } : {}),
@@ -80,7 +180,8 @@ export async function getGovernanceList(filter: { status?: SellerStatus; q?: str
     orderBy: [{ businessName: "asc" }],
     select: {
       id: true, businessName: true, phone: true, city: true, status: true, sellerStatus: true,
-      verified: true, rating: true, userId: true, isRealSeller: true, // P2-G audit fix (M-3): admin sees seller origin
+      verified: true, rating: true, userId: true, isRealSeller: true, // legacy flags (P2-G.1: superseded by sellerOrigin)
+      sellerOrigin: true, sellerVerificationStatus: true, verifiedAt: true, verificationActor: true, // P2-G.1 trust axes
       _count: { select: { offers: true, orders: true } },
     },
   });
@@ -178,7 +279,7 @@ export async function getCustomerOrder(owner: { userId?: string; sessionId?: str
     include: {
       sellerOrders: {
         include: {
-          seller: { select: { businessName: true, verified: true, sellerStatus: true } },
+          seller: { select: { businessName: true, sellerOrigin: true, sellerVerificationStatus: true, sellerStatus: true } },
           items: {
             include: {
               offer: { include: { part: { select: { title: true, sku: true } } } },

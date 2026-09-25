@@ -1,0 +1,19 @@
+{
+  "$comment": "Copy to .mcp.json and fill the two token envs (never commit real tokens). 'gh' needs: gh auth login (one time) OR a GH_TOKEN env. Vercel needs: vercel login OR VERCEL_TOKEN.",
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GH_TOKEN": "<paste-a-GitHub-PAT-here>"
+      }
+    },
+    "vercel": {
+      "command": "npx",
+      "args": ["-y", "@vercel/mcp-adapter", "--stdio", "vercel"],
+      "env": {
+        "VERCEL_TOKEN": "<paste-a-Vercel-token-here>"
+      }
+    }
+  }
+}

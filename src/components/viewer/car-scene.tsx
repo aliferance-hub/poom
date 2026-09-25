@@ -14,9 +14,18 @@ const ACCENT = "#1668e3";
 type CamVec = [number, number, number];
 type ViewMode = "full" | "isolated" | "exploded";
 
-function cameraFor(contract: AssetContractV2 | null, zoneKey: string | null): { pos: CamVec; target: CamVec } {
+function cameraFor(contract: AssetContractV2 | null, zoneKey: string | null, focusPart?: string | null): { pos: CamVec; target: CamVec } {
   const DEFAULT = { pos: [6.5, 3.2, 7.5] as CamVec, target: [0, 0.7, 0] as CamVec };
-  if (!zoneKey || !contract) return DEFAULT;
+  if (!contract) return DEFAULT;
+  // Focus-part mode (PDP): frame the part itself.
+  if (focusPart) {
+    const part = contract.parts.find((p) => p.meshName === focusPart);
+    if (part?.hotspot) {
+      const [hx, hy, hz] = part.hotspot;
+      return { pos: [hx + 1.9, hy + 0.95, hz + 1.9], target: [hx, hy, hz] };
+    }
+  }
+  if (!zoneKey) return DEFAULT;
   const z = contract.zones.find((x) => x.zoneKey === zoneKey);
   return z ? { pos: z.camera.position, target: z.camera.target } : DEFAULT;
 }
@@ -85,12 +94,12 @@ function Hotspot({ position, label, onClick }: { position: CamVec; label: string
   );
 }
 
-function CameraRig({ contract, activeZone, resetSignal, reduced }: {
-  contract: AssetContractV2 | null; activeZone: string | null; resetSignal: number; reduced: boolean;
+function CameraRig({ contract, activeZone, focusPart, resetSignal, reduced }: {
+  contract: AssetContractV2 | null; activeZone: string | null; focusPart?: string | null; resetSignal: number; reduced: boolean;
 }) {
   const camera = useThreeSafeCamera();
   const controls = useThreeSafeControls();
-  const dest = useMemo(() => cameraFor(contract, activeZone), [contract, activeZone, resetSignal]);
+  const dest = useMemo(() => cameraFor(contract, activeZone, focusPart ?? undefined), [contract, activeZone, focusPart, resetSignal]);
   const moving = useRef(false);
   useEffect(() => { moving.current = true; }, [dest, resetSignal]);
   useFrame(() => {
@@ -122,13 +131,14 @@ function LoadTracker({ onProgress }: { onProgress: (pct: number) => void }) {
  * Draco-compressed files fetch the decoder from the standard CDN at load time.
  */
 function RealModel({
-  url, contract, explodeFactor, isDimmed, onResolved,
+  url, contract, explodeFactor, isDimmed, focusPart, onResolved,
   interactionsFor, explodeOffsetFor,
 }: {
   url: string;
   contract: AssetContractV2;
   explodeFactor: number;
   isDimmed: (meshName: string) => boolean;
+  focusPart?: string | null;
   onResolved: (found: string[], missing: string[]) => void;
   interactionsFor: (meshName: string) => {
     onOver: (e: ThreeEvent<PointerEvent>) => void;
@@ -185,10 +195,51 @@ function RealModel({
         return n !== "" && n !== target && (n.includes(target) || target.includes(n));
       });
       const hit = exact ?? fuzzy;
-      if (hit) out.push({ name, node: hit.clone(true) });
+      if (hit) {
+        const node = hit.clone(true);
+        // Per-mesh material clones: the GLB ships one shared material, and ghost
+        // mode must set opacity independently per contract mesh.
+        node.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (mesh.isMesh) {
+            mesh.material = Array.isArray(mesh.material)
+              ? mesh.material.map((mm) => mm.clone())
+              : mesh.material.clone();
+          }
+        });
+        out.push({ name, node });
+      }
     }
     return out;
   }, [gltf, contract]);
+
+  // Ghost appearance: in focus mode every mesh except the focused part fades to
+  // 10% opacity (the part stays solid) — applied imperatively to the clones.
+  const appearance = useMemo(() => {
+    const spec: Record<string, "solid" | "ghost"> = {};
+    for (const { name } of resolved) {
+      spec[name] =
+        (focusPart != null && name !== focusPart) || isDimmed(name) ? "ghost" : "solid";
+    }
+    return spec;
+  }, [resolved, focusPart, isDimmed]);
+
+  useEffect(() => {
+    for (const { name, node } of resolved) {
+      const ghost = appearance[name] === "ghost";
+      node.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const m of mats) {
+          const std = m as THREE.MeshStandardMaterial;
+          std.transparent = ghost;
+          std.opacity = ghost ? 0.10 : 1;
+          std.depthWrite = !ghost;
+        }
+      });
+    }
+  }, [resolved, appearance]);
 
   return (
     <group>
@@ -201,7 +252,7 @@ function RealModel({
           (off?.[2] ?? 0) * explodeFactor,
         ];
         return (
-          <group key={name} position={pos} visible={!isDimmed(name)}
+          <group key={name} position={pos}
             onPointerOver={it.onOver} onPointerOut={it.onOut} onClick={it.onClick}>
             <primitive object={node} />
           </group>
@@ -251,10 +302,11 @@ function placeholderShape(meshName: string): { position: CamVec; size: CamVec; c
 }
 
 export function CarScene({
-  contract, zones, onWebglFail,
+  contract, zones, focusPart, onWebglFail,
 }: {
   contract: AssetContractV2 | null;
   zones: ZoneInfo[];
+  focusPart?: string | null;
   onWebglFail?: () => void;
 }) {
   const router = useRouter();
@@ -297,7 +349,10 @@ export function CarScene({
   const over = (k: string) => (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); setHovered(k); document.body.style.cursor = "pointer"; };
   const out = () => (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); setHovered(null); document.body.style.cursor = "auto"; };
 
-  const hot = (k: string) => hovered === k || activeZone === k;
+  const hot = (k: string) => hovered === k || activeZone === k || (focusPart != null && (k === focusPart || k === focusPart.replace("part_", "zone_")));
+  // PDP focus mode: the whole car is context — ghost everything except the focused part.
+  const ghostAll = (meshKey: string) =>
+    focusPart != null && meshKey !== focusPart;
   const isDimmed = (meshKey: string) =>
     viewMode === "isolated" && activeZone !== null &&
     meshKey !== `zone_${activeZone}` && !partByMesh.has(meshKey) &&
@@ -371,7 +426,7 @@ export function CarScene({
                 color={shape.color}
                 kind={part ? "part" : "zone"}
                 highlight={hot(key)}
-                dimmed={isDimmed(meshName)}
+                dimmed={ghostAll(meshName) || isDimmed(meshName)}
                 hidden={realFound.has(meshName)} // real GLB replaces its placeholder
                 explodedOffset={explodeOffsetFor(meshName)}
                 explodeFactor={explodeFactor}
@@ -390,6 +445,7 @@ export function CarScene({
                   contract={contract}
                   explodeFactor={explodeFactor}
                   isDimmed={isDimmed}
+                  focusPart={focusPart}
                   onResolved={onRealResolved}
                   interactionsFor={interactionsFor}
                   explodeOffsetFor={explodeOffsetFor}
@@ -407,7 +463,7 @@ export function CarScene({
             <meshStandardMaterial color="#eceef2" />
           </mesh>
         </group>
-        <CameraRig contract={contract} activeZone={activeZone} resetSignal={resetSignal} reduced={!!reduced} />
+        <CameraRig contract={contract} activeZone={activeZone} focusPart={focusPart} resetSignal={resetSignal} reduced={!!reduced} />
         {realUrl && <LoadTracker onProgress={setLoadingProgress} />}
         <OrbitControls makeDefault enablePan={false} minDistance={2.5} maxDistance={16} maxPolarAngle={Math.PI / 2.05} />
         <GizmoHelper alignment="bottom-left" margin={[64, 64]}>

@@ -1,5 +1,12 @@
 # P2-G — Real Seller Onboarding + Real-Offer Pipeline — Final Report
 
+> **P2-G.1 follow-up (2026-09-23):** seller trust semantics were split into independent
+> axes — `sellerOrigin` (DEMO/REAL_ONBOARDING/SYSTEM) ⊥ `sellerVerificationStatus`
+> (UNVERIFIED/PENDING_REVIEW/VERIFIED/REJECTED) ⊥ `sellerStatus` (governance).
+> REAL_ONBOARDING does not mean VERIFIED; VERIFIED means exactly what the admin
+> verification workflow (`setSellerVerificationStatus`, audited, evidence-backed)
+> proves. Full report: `PHASE2-G1-SELLER-TRUST-REPORT.md`.
+
 Date: 2026-09-21 · Scope: closing the F6 boundary ("real seller data readiness") via the first non-DEMO seller lifecycle: public apply → admin approval → authenticated seller portal → real offer on a canonical part → customer purchase.
 
 ## What was built

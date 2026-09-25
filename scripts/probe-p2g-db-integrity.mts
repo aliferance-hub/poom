@@ -98,6 +98,61 @@ async function main() {
   const roleOrphans = await prisma.user.count({ where: { role: "SELLER", seller: null } });
   await q("seller-role-without-seller-row", roleOrphans, "(demo SELLER_LOGIN user owns a seeded Seller — 0 expected)");
 
+  // ───────────── P2-G.1: seller trust axes (origin ⊥ verification) ─────────────
+
+  // every seller must carry a valid origin (enum type guarantees the domain;
+  // NULL would be a migration failure)
+  const nullOrigin = await prisma.$queryRaw<{ c: bigint }[]>`SELECT COUNT(*)::int AS c FROM "Seller" WHERE "sellerOrigin" IS NULL`;
+  await q("seller-origin-missing", Number(nullOrigin[0]?.c ?? 0));
+
+  const nullVerification = await prisma.$queryRaw<{ c: bigint }[]>`SELECT COUNT(*)::int AS c FROM "Seller" WHERE "sellerVerificationStatus" IS NULL`;
+  await q("seller-verification-missing", Number(nullVerification[0]?.c ?? 0));
+
+  // legacy flags must stay in sync with the authoritative axes
+  const flagDrift = await prisma.$queryRaw<{ c: bigint }[]>`
+    SELECT COUNT(*)::int AS c FROM "Seller"
+    WHERE ("isRealSeller" <> ("sellerOrigin" = 'REAL_ONBOARDING'))
+       OR ("verified" <> ("sellerVerificationStatus" = 'VERIFIED'))`;
+  await q("legacy-trust-flags-out-of-sync", Number(flagDrift[0]?.c ?? 0));
+
+  // DEMO sellers must never be VERIFIED — demo data carries no verification basis
+  const demoVerified = await prisma.seller.count({
+    where: { sellerOrigin: "DEMO", sellerVerificationStatus: "VERIFIED" },
+  });
+  await q("demo-seller-marked-verified", demoVerified);
+
+  // a VERIFIED seller must have recorded decision evidence (actor + timestamp
+  // + an audit event). The migration backfilled no evidence, so any VERIFIED
+  // row without it is an unexplained violation.
+  const verifiedNoEvidence = await prisma.$queryRaw<{ c: bigint }[]>`
+    SELECT COUNT(*)::int AS c FROM "Seller" s
+    WHERE s."sellerVerificationStatus" = 'VERIFIED'
+      AND (s."verifiedAt" IS NULL OR s."verificationActor" IS NULL)`;
+  await q("verified-seller-without-evidence", Number(verifiedNoEvidence[0]?.c ?? 0));
+
+  const verifiedNoAudit = await prisma.$queryRaw<{ c: bigint }[]>`
+    SELECT COUNT(*)::int AS c FROM "Seller" s
+    WHERE s."sellerVerificationStatus" = 'VERIFIED'
+      AND NOT EXISTS (
+        SELECT 1 FROM "SellerEventLog" l
+        WHERE l."sellerId" = s.id AND l.event = 'seller_verification_changed'
+          AND l.meta->>'to' = 'VERIFIED'
+      )`;
+  await q("verified-seller-without-audit-event", Number(verifiedNoAudit[0]?.c ?? 0));
+
+  // VERIFIED must survive only through the evidence columns; conversely a
+  // non-VERIFIED seller must not retain stale evidence
+  const staleEvidence = await prisma.$queryRaw<{ c: bigint }[]>`
+    SELECT COUNT(*)::int AS c FROM "Seller" s
+    WHERE s."sellerVerificationStatus" <> 'VERIFIED'
+      AND (s."verifiedAt" IS NOT NULL OR s."verificationActor" IS NOT NULL)`;
+  await q("stale-verification-evidence-on-unverified", Number(staleEvidence[0]?.c ?? 0));
+
+  // SYSTEM sentinel must never look like a sellable seller
+  const systemSeller = await prisma.seller.findUnique({ where: { id: "audit-system" } });
+  const systemLooksReal = systemSeller && systemSeller.sellerOrigin !== "SYSTEM";
+  console.log(`${systemLooksReal ? "VIOLATION" : "OK "} audit-sentinel-origin-is-SYSTEM: ${systemSeller?.sellerOrigin ?? "(row absent)"}`);
+
   console.log("\nDONE");
 }
 

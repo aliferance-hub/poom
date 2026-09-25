@@ -16,11 +16,13 @@ const CarScene = dynamic(() => import("./car-scene").then((m) => m.CarScene), {
 });
 
 export function VehicleViewer({
-  contract, zones, variantId,
+  contract, zones, variantId, focusPart,
 }: {
   contract: AssetContract | null;
   zones: ZoneInfo[];
   variantId?: string;
+  /** PDP focus mode: meshName of the part to highlight (car renders as ghost). */
+  focusPart?: string | null;
 }) {
   const [failed, setFailed] = useState(false);
 
@@ -45,5 +47,5 @@ export function VehicleViewer({
     );
   }
 
-  return <CarScene contract={contract} zones={zones} onWebglFail={() => setFailed(true)} />;
+  return <CarScene contract={contract} zones={zones} focusPart={focusPart} onWebglFail={() => setFailed(true)} />;
 }

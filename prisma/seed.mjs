@@ -140,6 +140,9 @@ await prisma.$transaction(async (tx) => {
         rating: [4.8, 4.6, 4.9][i],
         responseRate: [0.92, 0.87, 0.95][i],
         verified: false,
+        // P2-G.1: demo entities are DEMO-origin and never VERIFIED.
+        sellerOrigin: 'DEMO',
+        sellerVerificationStatus: 'UNVERIFIED',
       },
     }));
   }

@@ -7,7 +7,7 @@ import { PrismaClient } from "@prisma/client";
 import { applyAsSeller, createSellerOffer } from "../src/lib/seller/seller-onboarding";
 import { updateSellerOffer, setSellerOfferActive } from "../src/lib/seller/seller-offers";
 import { updateSellerProfile } from "../src/lib/seller/seller-service";
-import { transitionSellerStatus } from "../src/lib/governance";
+import { transitionSellerStatus, setSellerVerificationStatus } from "../src/lib/governance";
 import { createSession } from "../src/lib/auth/session";
 
 const prisma = new PrismaClient();
@@ -145,6 +145,77 @@ async function main() {
     const revokedCount = sessionsForUser.filter(s => s.revokedAt !== null).length;
     verdict("suspend-revokes-sessions", sessionsForUser.length > 0 && revokedCount === sessionsForUser.length && sess === null,
       `sessions=${sessionsForUser.length} revoked=${revokedCount}`);
+  }
+
+  // ───────────── P2-G.1 probes: trust axes under attack ─────────────
+
+  // ── PROBE 8: seller profile-update path cannot mutate the new trust axes
+  {
+    const A = await mkRealSeller("پروب محور اعتماد ۸");
+    const before = await prisma.seller.findUniqueOrThrow({ where: { id: A.sellerId } });
+    const r = await updateSellerProfile(A.sellerId, A.userId, {
+      businessName: "پروب محور اعتماد ۸",
+      sellerOrigin: "DEMO",
+      sellerVerificationStatus: "VERIFIED",
+      sellerStatus: "SUSPENDED",
+      verified: true,
+      verifiedAt: new Date(),
+      verificationActor: "self",
+    } as never);
+    const after = await prisma.seller.findUniqueOrThrow({ where: { id: A.sellerId } });
+    verdict("trust-axes-immune-to-profile-injection",
+      r.ok === true
+        && after.sellerOrigin === before.sellerOrigin
+        && after.sellerVerificationStatus === "UNVERIFIED"
+        && after.sellerStatus === before.sellerStatus
+        && after.verified === false,
+      `origin=${after.sellerOrigin} verification=${after.sellerVerificationStatus}`);
+  }
+
+  // ── PROBE 9: forged verification value is rejected by the state machine
+  {
+    const A = await mkRealSeller("پروب جعل مقدار ۹");
+    const r = await setSellerVerificationStatus({
+      sellerId: A.sellerId,
+      to: "HAX" as never,
+      adminUserId: "probe-admin",
+    });
+    const s = await prisma.seller.findUniqueOrThrow({ where: { id: A.sellerId } });
+    verdict("forged-verification-value-denied", r.ok === false && s.sellerVerificationStatus === "UNVERIFIED",
+      `result=${JSON.stringify(r)}`);
+  }
+
+  // ── PROBE 10: onboarding input cannot smuggle origin/verification fields
+  {
+    const user = await prisma.user.create({ data: { phone: uniq(), role: "CUSTOMER" } });
+    clean.users.push(user.id);
+    const r = await applyAsSeller(user.id, {
+      businessName: "پروب قاچاق ۱۰",
+      sellerVerificationStatus: "VERIFIED",
+      sellerOrigin: "DEMO",
+      verified: true,
+    } as never);
+    const s = r.ok ? await prisma.seller.findUniqueOrThrow({ where: { id: r.sellerId } }) : null;
+    if (r.ok && s) clean.sellers.push(s.id);
+    verdict("onboarding-cannot-smuggle-trust-fields",
+      r.ok === true && s !== null
+        && s!.sellerVerificationStatus === "UNVERIFIED"
+        && s!.sellerOrigin === "REAL_ONBOARDING",
+      `origin=${s?.sellerOrigin} verification=${s?.sellerVerificationStatus}`);
+  }
+
+  // ── PROBE 11: verification is audited and evidence-backed; revocation clears both
+  {
+    const A = await mkRealSeller("پروب ممیزی ۱۱");
+    await setSellerVerificationStatus({ sellerId: A.sellerId, to: "VERIFIED", adminUserId: "probe-admin", note: "بررسی" });
+    const v = await prisma.seller.findUniqueOrThrow({ where: { id: A.sellerId } });
+    const logsAfterVerify = await prisma.sellerEventLog.count({ where: { sellerId: A.sellerId, event: "seller_verification_changed" } });
+    const okV = v.verifiedAt !== null && v.verificationActor === "probe-admin" && logsAfterVerify === 1;
+    await setSellerVerificationStatus({ sellerId: A.sellerId, to: "UNVERIFIED", adminUserId: "probe-admin" });
+    const u = await prisma.seller.findUniqueOrThrow({ where: { id: A.sellerId } });
+    const logsAfterRevoke = await prisma.sellerEventLog.count({ where: { sellerId: A.sellerId, event: "seller_verification_changed" } });
+    verdict("verification-audited-and-revocable", okV && u.verifiedAt === null && u.verificationActor === null && logsAfterRevoke === 2,
+      `logs after verify=${logsAfterVerify}, after revoke=${logsAfterRevoke}, actor=${u.verificationActor ?? "null"}`);
   }
 
   console.log(`\nRESULT: ${pass} PASS, ${fail} FAIL`);

@@ -336,7 +336,16 @@ describe("seller & admin visibility", () => {
     });
     expect(visibleToSeller).not.toBeNull();
 
-    const mappings = await prisma.meshMapping.count({ where: { kind: "zone" } });
+    // Count zone mappings on the ACTIVE asset version (v2 adds a second copy of
+    // every mapping — the invariant is per-version, not per-table).
+    const activeVersion = await prisma.assetVersion.findFirst({
+      where: { status: "ACTIVE" },
+      orderBy: { activatedAt: "desc" },
+      select: { id: true },
+    });
+    const mappings = await prisma.meshMapping.count({
+      where: { kind: "zone", versionId: activeVersion!.id },
+    });
     expect(mappings).toBe(8);
   });
 });

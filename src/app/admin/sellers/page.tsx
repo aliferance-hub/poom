@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth/identity";
 import { getGovernanceList } from "@/lib/governance";
-import { transitionSellerStatusAction } from "@/app/admin/admin-p2e-actions";
+import { transitionSellerStatusAction, setSellerVerificationAction } from "@/app/admin/admin-p2e-actions";
 import { toPersianDigits, formatToman } from "@/lib/persian";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +13,29 @@ const STATUS_FA: Record<string, string> = {
   ACTIVE: "فعال",
   SUSPENDED: "تعلیق",
   REJECTED: "رد شده",
+};
+
+// P2-G.1: neutral verification wording — "تأیید شده در سیستم" = verified in THIS
+// system per the implemented workflow; never a legal/business-registry claim.
+const VERIFICATION_FA: Record<string, string> = {
+  UNVERIFIED: "تأیید نشده",
+  PENDING_REVIEW: "در انتظار بررسی",
+  VERIFIED: "تأیید شده در سیستم",
+  REJECTED: "رد شده",
+};
+
+const ORIGIN_FA: Record<string, string> = {
+  DEMO: "نمایشی",
+  REAL_ONBOARDING: "ثبت‌نام واقعی",
+  SYSTEM: "سیستمی",
+};
+
+// Verification actions offered per current verification state.
+const VERIFICATION_ACTIONS: Record<string, [string, string, string][]> = {
+  UNVERIFIED: [["PENDING_REVIEW", "صف", ""], ["VERIFIED", "تأیید در سیستم", ""]],
+  PENDING_REVIEW: [["VERIFIED", "تأیید در سیستم", ""], ["REJECTED", "رد تأیید", ""], ["UNVERIFIED", "بازگشت", ""]],
+  VERIFIED: [["UNVERIFIED", "لغو تأیید", ""]],
+  REJECTED: [["PENDING_REVIEW", "بررسی مجدد", ""]],
 };
 
 const NEXT_ACTIONS: Record<string, [string, string][]> = {
@@ -72,15 +95,20 @@ export default async function AdminSellersPage({
             <div className="min-w-48 flex-1">
               <div className="font-medium">
                 {s.businessName}
-                {/* P2-G audit fix (M-3): origin is a governance-relevant fact for admins. */}
-                <span className={`badge ml-1 ${s.isRealSeller ? "bg-blue-50 text-blue-700" : "bg-black/5 text-black/50"}`}>
-                  {s.isRealSeller ? "ثبت‌نام واقعی" : "نمایشی"}
+                {/* P2-G.1: origin from the authoritative axis (legacy isRealSeller
+                    kept in sync but no longer rendered). */}
+                <span className={`badge ml-1 ${s.sellerOrigin === "REAL_ONBOARDING" ? "bg-blue-50 text-blue-700" : s.sellerOrigin === "SYSTEM" ? "bg-black/5 text-black/30" : "bg-black/5 text-black/50"}`}>
+                  {ORIGIN_FA[s.sellerOrigin]}
+                </span>
+                {/* Verification is shown independently of origin and status. */}
+                <span className={`badge ml-1 ${s.sellerVerificationStatus === "VERIFIED" ? "bg-green-100 text-green-900" : s.sellerVerificationStatus === "REJECTED" ? "bg-red-100 text-red-900" : "bg-amber-50 text-amber-900"}`}>
+                  {VERIFICATION_FA[s.sellerVerificationStatus]}
                 </span>
               </div>
               <div className="text-[10px] text-black/40">{s.city ?? "—"} · {s.phone ?? "—"} · امتیاز {toPersianDigits(s.rating.toFixed(1))}</div>
               <div className="text-[10px] text-black/40">{toPersianDigits(s._count.offers)} آفر · {toPersianDigits(s._count.orders)} سفارش · <Link className="underline" href={`/seller-demo?seller=${s.id}`}>مشاهده</Link></div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className={`badge ${s.sellerStatus === "ACTIVE" ? "bg-green-100 text-green-900" : s.sellerStatus === "SUSPENDED" || s.sellerStatus === "REJECTED" ? "bg-red-100 text-red-900" : "bg-amber-100 text-amber-900"}`}>
                 {STATUS_FA[s.sellerStatus]}
               </span>
@@ -91,6 +119,17 @@ export default async function AdminSellersPage({
                   <button className={`btn-ghost !px-2 !py-1 !text-xs ${to === "REJECTED" || to === "SUSPENDED" ? "!text-red-700" : ""}`} type="submit">
                     {label}
                   </button>
+                </form>
+              ))}
+            </div>
+            {/* P2-G.1: verification actions — separate from governance actions;
+                every button is a form POST to the audited server action. */}
+            <div className="flex flex-wrap items-center gap-1 pl-2">
+              {(VERIFICATION_ACTIONS[s.sellerVerificationStatus] ?? []).map(([to, label]) => (
+                <form key={to} action={setSellerVerificationAction}>
+                  <input type="hidden" name="sellerId" value={s.id} />
+                  <input type="hidden" name="to" value={to} />
+                  <button className="btn-ghost !px-2 !py-1 !text-xs" type="submit">{label}</button>
                 </form>
               ))}
             </div>

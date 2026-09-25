@@ -22,6 +22,7 @@ export type AuditEvent =
   | "seller_suspended"
   | "seller_rejected"
   | "seller_reactivated"
+  | "seller_verification_changed" // P2-G.1: admin verification decision (origin-independent axis)
   | "seller_order_status_changed"
   | "order_created"
   | "payment_attempt_created"
@@ -64,7 +65,11 @@ async function ensureSystemSellerTx(tx: Prisma.TransactionClient): Promise<strin
   const existing = await tx.seller.findUnique({ where: { id: SYSTEM_SELLER_ID }, select: { id: true } });
   if (existing) return existing.id;
   await tx.seller.create({
-    data: { id: SYSTEM_SELLER_ID, businessName: "سیستم (رخدادهای سیستمی)", sellerStatus: "PENDING", status: "SYSTEM", verified: false },
+    data: {
+      id: SYSTEM_SELLER_ID, businessName: "سیستم (رخدادهای سیستمی)", sellerStatus: "PENDING", status: "SYSTEM", verified: false,
+      // P2-G.1: the bookkeeping sentinel is neither DEMO data nor a real seller.
+      sellerOrigin: "SYSTEM", sellerVerificationStatus: "UNVERIFIED",
+    },
   });
   return SYSTEM_SELLER_ID;
 }

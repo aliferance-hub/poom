@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/auth/identity";
 import { getReturnEligibility } from "@/lib/returns";
 import { cancelCustomerOrder } from "@/app/account/order-actions";
 import { formatToman, toPersianDigits } from "@/lib/persian";
+import { sellerOriginLabelFa, sellerVerificationBadgeFa } from "@/lib/seller/seller-trust-label";
 
 export const dynamic = "force-dynamic";
 
@@ -93,10 +94,17 @@ export default async function CustomerOrderDetailPage({ params }: { params: Prom
           <section key={so.id} className="card space-y-2 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-bold">{so.seller.businessName}</h2>
-              <div className="flex items-center gap-1">
-                {so.seller.verified && <span className="badge bg-green-100 text-green-900">✓ فروشنده تأییدشده</span>}
+              <div className="flex flex-wrap items-center gap-1">
+                {/* P2-G.1: origin + verification derived from authoritative state.
+                    The old «✓ فروشنده تأییدشده» badge keyed off the dead `verified`
+                    boolean and overclaimed — replaced by the scoped wording. */}
+                {(() => {
+                  const badge = sellerVerificationBadgeFa(so.seller);
+                  return badge ? <span className={`badge ${badge.className}`}>{badge.text}</span> : null;
+                })()}
                 <span className="badge bg-black/6">{SO_STATUS_FA[so.status] ?? so.status}</span>
               </div>
+              <div className="text-[10px] text-black/40">{sellerOriginLabelFa(so.seller)}</div>
             </div>
 
             {so.status !== "CANCELLED" && so.status !== "RETURNED" && (

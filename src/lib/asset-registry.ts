@@ -53,7 +53,9 @@ export async function createAssetVersion(input: {
 
   if (input.fileBuffer) {
     data.filePath = `uploads/assets/${asset.assetId}/v${nextVersion}/${sanitizeName(input.fileName ?? "model.glb")}`;
-    data.fileUrl = data.filePath;
+    // Web-root absolute URL: GLTFLoader resolves relative URLs against the current
+    // route (/parts/...), which 404s. FS consumers use filePath; the browser uses fileUrl.
+    data.fileUrl = `/${data.filePath}`;
     data.fileSize = input.fileBuffer.length;
     data.mimeType = input.mimeType ?? guessMime(input.fileName ?? "");
     data.checksumSha256 = sha256(input.fileBuffer);
@@ -177,8 +179,10 @@ export type AssetContractV2 = {
   versionNumber: number;
   format: string;
   source: string;
-  /** P2-F (F1): file for the active version. `builtin:*` = placeholder geometry;
-   *  a real GLB path makes the viewer lazy-load the model through this field only. */
+  /** P2-F (F1): URL for the active version's file. `null` = placeholder geometry;
+   *  an uploaded GLB is served from public/ with a web-root ABSOLUTE URL always
+   *  derived from filePath — GLTFLoader resolves relative URLs against the current
+   *  route (/parts/...), which 404s. The stored fileUrl remains provenance. */
   fileUrl: string | null;
   checksumSha256: string | null;
   license: {
@@ -266,7 +270,9 @@ export async function resolveContract(vehicleId: string): Promise<AssetContractV
     versionNumber: version.version,
     format: asset.format,
     source: asset.source,
-    fileUrl: version.fileUrl ?? null,
+    fileUrl: version.filePath && !version.filePath.startsWith("builtin:")
+      ? `/${version.filePath}`
+      : null,
     checksumSha256: version.checksumSha256 ?? null,
     license: {
       licenseType: version.licenseType,

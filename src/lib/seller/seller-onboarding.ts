@@ -57,8 +57,12 @@ export async function applyAsSeller(
       // governance status starts PENDING — admin approval required before selling
       sellerStatus: "PENDING",
       status: "PENDING_REVIEW", // legacy Phase-1 string surfaced to admin UI
-      verified: false,
-      isRealSeller: true, // arrived through onboarding, not the demo seed
+      verified: false, // legacy derived flag — verification is sellerVerificationStatus
+      isRealSeller: true, // legacy origin flag kept in sync (P2-G.1)
+      // P2-G.1: origin is REAL_ONBOARDING, verification is UNVERIFIED — onboarding
+      // proves how the seller arrived, NEVER that they are verified.
+      sellerOrigin: "REAL_ONBOARDING",
+      sellerVerificationStatus: "UNVERIFIED",
       rating: 0,
       userId,
     },
