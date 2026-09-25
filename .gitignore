@@ -17,3 +17,6 @@ graphify-out/
 # thread workspace artifacts (never commit)
 .freebuff/
 .mcp.json
+
+.vercel
+.env*
