@@ -1,0 +1,15 @@
+# Local-only files: never upload these to a deployment.
+# The CLI builds its upload archive from the working tree, so a local .env would
+# otherwise travel with the source and leak demo credentials into production.
+.env
+.env.local
+.env.production
+.env.development
+.env.test
+
+node_modules
+.vercel
+.next
+tmp-loop-logs
+logs
+*.log
