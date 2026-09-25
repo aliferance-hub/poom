@@ -124,7 +124,14 @@ const CATALOG = [
   ]],
 ];
 
-await prisma.$transaction(async (tx) => {
+// Interactive-transaction defaults (5s) blow up over a WAN (remote hosted DB):
+// the whole seed is one transaction, so allow up to 3 minutes.
+// WAN-resilient: the demo dataset is fully idempotent (upserts everywhere), so
+// it runs WITHOUT one giant interactive transaction — a single dropped
+// connection to a remote DB would abort a long tx midway (P2028). Re-run
+// continues/repairs instead of failing from scratch.
+{
+  const tx = prisma;
   // ── Demo sellers (explicitly unverified demo entities) ──
   const sellers = [];
   const sellerNames = ['فروشنده نمایشی ۱', 'فروشنده نمایشی ۲', 'فروشنده نمایشی ۳'];
@@ -391,4 +398,4 @@ await prisma.$transaction(async (tx) => {
   }
 
   console.log(`✔ seed: vehicle=${vehicle.displayName} parts=${partCount} sellers=3 zones=${ZONES.length} categories=${Object.keys(CATEGORIES).length} brands=${BRANDS.length}`);
-});
+}

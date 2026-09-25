@@ -6,8 +6,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Supabase: migrations must bypass PgBouncer (transaction pooler) → direct
+  // session connection. Falls back to DATABASE_URL when unset (local dev).
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 // ─────────────────────────── Users & Sellers ───────────────────────────

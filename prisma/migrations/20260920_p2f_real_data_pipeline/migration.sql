@@ -1,27 +1,9 @@
 -- P2-F: real-data pipeline (F1 + F3/F5)
 -- Idempotent: safe to re-run.
+-- NOTE: ImportBatch/ImportRow creation moved BEFORE the ALTERs — a fresh DB
+-- (Supabase) has no ImportBatch yet, and ALTER-before-CREATE fails with 42P01.
 
--- ── F1: AssetVersion provenance completeness ──
-ALTER TABLE "AssetVersion" ADD COLUMN IF NOT EXISTS "acquiredAt" TIMESTAMP(3);
-ALTER TABLE "AssetVersion" ADD COLUMN IF NOT EXISTS "modifications" TEXT;
-ALTER TABLE "AssetVersion" ADD COLUMN IF NOT EXISTS "intendedUsage" TEXT;
-
--- ── F3/F5: Part provenance ──
-ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "titleEn" TEXT;
-ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "sourceRef" TEXT;
-ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "sourceUrl" TEXT;
-ALTER TABLE "ImportBatch" ADD COLUMN IF NOT EXISTS "sourceUpdatedAt" TIMESTAMP(3);
-ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "sourceUpdatedAt" TIMESTAMP(3);
-ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "verifiedAt" TIMESTAMP(3);
-ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "verifiedBy" TEXT;
-ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "dataNotes" TEXT;
-ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "dataVersion" INTEGER NOT NULL DEFAULT 1;
-
--- ── F5: DataStatus extension (run outside a transaction: ALTER TYPE) ──
-ALTER TYPE "DataStatus" ADD VALUE IF NOT EXISTS 'REVIEW_REQUIRED';
-ALTER TYPE "DataStatus" ADD VALUE IF NOT EXISTS 'DEPRECATED';
-
--- ── F5: import pipeline ──
+-- ── F5: import pipeline (tables first) ──
 DO $$ BEGIN
   CREATE TYPE "ImportStatus" AS ENUM ('DRAFT', 'VALIDATED', 'APPROVED', 'REJECTED', 'COMMITTED', 'FAILED');
 EXCEPTION WHEN duplicate_object THEN null; END $$;
@@ -68,3 +50,23 @@ CREATE INDEX IF NOT EXISTS "ImportRow_externalKey_idx" ON "ImportRow"("externalK
 DO $$ BEGIN
   ALTER TABLE "ImportRow" ADD CONSTRAINT "ImportRow_batchId_fkey" FOREIGN KEY ("batchId") REFERENCES "ImportBatch"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 EXCEPTION WHEN duplicate_object THEN null; END $$;
+
+-- ── F1: AssetVersion provenance completeness ──
+ALTER TABLE "AssetVersion" ADD COLUMN IF NOT EXISTS "acquiredAt" TIMESTAMP(3);
+ALTER TABLE "AssetVersion" ADD COLUMN IF NOT EXISTS "modifications" TEXT;
+ALTER TABLE "AssetVersion" ADD COLUMN IF NOT EXISTS "intendedUsage" TEXT;
+
+-- ── F3/F5: Part provenance ──
+ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "titleEn" TEXT;
+ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "sourceRef" TEXT;
+ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "sourceUrl" TEXT;
+ALTER TABLE "ImportBatch" ADD COLUMN IF NOT EXISTS "sourceUpdatedAt" TIMESTAMP(3);
+ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "sourceUpdatedAt" TIMESTAMP(3);
+ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "verifiedAt" TIMESTAMP(3);
+ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "verifiedBy" TEXT;
+ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "dataNotes" TEXT;
+ALTER TABLE "Part" ADD COLUMN IF NOT EXISTS "dataVersion" INTEGER NOT NULL DEFAULT 1;
+
+-- ── F5: DataStatus extension (run outside a transaction: ALTER TYPE) ──
+ALTER TYPE "DataStatus" ADD VALUE IF NOT EXISTS 'REVIEW_REQUIRED';
+ALTER TYPE "DataStatus" ADD VALUE IF NOT EXISTS 'DEPRECATED';
