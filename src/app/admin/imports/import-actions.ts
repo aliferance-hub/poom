@@ -84,10 +84,13 @@ export async function commitBatchAction(batchId: string) {
   }
 }
 
-/** F8/P2-F.1 §4: a human verifies a part — delegates to the lib gate (audited, refuses DEPRECATED). */
+/** F8/P2-F.1 §4: a human verifies a part — delegates to the lib gate (audited, refuses DEPRECATED, REQUIRES evidence — P2-I I4). */
 export async function verifyPartAction(partId: string, sourceUrl?: string) {
   try {
     const uid = await adminId();
+    // P2-I (I4): evidence is mandatory — a verification without a checkable
+    // source is exactly the "blind approve button" the phase forbids.
+    if (!sourceUrl?.trim()) return fail(new Error("EVIDENCE_REQUIRED"));
     const r = await verifyRealPart(partId, uid, sourceUrl);
     if (!r.ok) return fail(new Error(r.reason));
     revalidatePath("/admin/parts");
@@ -103,16 +106,29 @@ export async function verifyPartAction(partId: string, sourceUrl?: string) {
 export async function deprecatePartAction(partId: string, note?: string) {
   try {
     const uid = await adminId();
-    await prisma.part.update({
-      where: { id: partId },
-      data: {
-        dataStatus: "DEPRECATED",
-        dataNotes: note,
-        verifiedAt: null,
-        verifiedBy: null,
-        dataVersion: { increment: 1 },
-      },
-    });
+    const prev = await prisma.part.findUnique({ where: { id: partId }, select: { dataStatus: true } });
+    await prisma.$transaction([
+      prisma.part.update({
+        where: { id: partId },
+        data: {
+          dataStatus: "DEPRECATED",
+          dataNotes: note,
+          verifiedAt: null,
+          verifiedBy: null,
+          dataVersion: { increment: 1 },
+        },
+      }),
+      prisma.catalogEventLog.create({
+        data: {
+          partId,
+          actor: uid,
+          event: "catalog_deprecated",
+          entity: "Part",
+          entityId: partId,
+          meta: { fromState: prev?.dataStatus ?? null, toState: "DEPRECATED", note: note ?? null },
+        },
+      }),
+    ]);
     revalidatePath("/admin/parts");
     revalidatePath("/admin/data-quality");
     return { ok: true as const };

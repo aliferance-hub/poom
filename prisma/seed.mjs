@@ -395,7 +395,9 @@ const CATALOG = [
       dataStatus,
       ...(dataStatus === 'REVIEW_REQUIRED' ? {
         sourceRef: PROVENANCE_REF,
-        sourceUrl: 'https://example.org/evidence',
+        // P2-I: sourceUrl stays NULL — absence is honest. A placeholder URL
+        // would fabricate a citation for data whose only provenance is the
+        // P2-F dataset reference itself.
         sourceUpdatedAt: new Date('2024-09-01'),
       } : {}),
     };
@@ -453,14 +455,12 @@ const CATALOG = [
       },
     });
   }
-  const oilFilterPart = await tx.part.findUnique({ where: { sku: '206-OFL-001' } });
-  if (oilFilterPart) {
-    await tx.partIdentifier.upsert({
-      where: { partId_type_value: { partId: oilFilterPart.id, type: 'OEM', value: '1109.AX' } },
-      update: {},
-      create: { partId: oilFilterPart.id, type: 'OEM', value: '1109.AX' },
-    });
-  }
+  // P2-I evidence audit (2026-09-26): the previously seeded OEM identifier
+  // "1109.AX" for the oil filter could NOT be confirmed for the 206 by any
+  // independent source (cross-reference indexes tie 1109.AX to the Boxer-class
+  // W9142 filter family; PSA's TU-family spin-on oil-filter OE is the 1109 A9
+  // family). Attaching an unconfirmable OE number would be fabrication — the
+  // identifier is intentionally NOT seeded. See PHASE2-I-EVIDENCE-MATRIX.md.
 
   // ── Fitment matrix (P2-B test cases) ──
   // Deterministic reset: matrix parts define EXACTLY the rules below (removes rows

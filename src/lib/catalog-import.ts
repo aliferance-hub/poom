@@ -399,46 +399,86 @@ export async function getBatchSummary(batchId: string) {
 
 export type VerificationOutcome =
   | { ok: true; slug: string; dataStatus: "VERIFIED" }
-  | { ok: false; reason: "PART_NOT_FOUND" | "DEPRECATED" };
+  | { ok: false; reason: "PART_NOT_FOUND" | "DEPRECATED" | "DEMO_PART" | "EVIDENCE_REQUIRED" | "NO_SOURCE_REF" };
 
 /**
  * Human verification of a real catalog record — the ONLY path to VERIFIED.
- * Records who/when, bumps dataVersion, and (optionally) records the evidence URL.
+ * P2-I (I4) hardening:
+ *  - evidenceUrl is REQUIRED (a claim must be checkable; no one-click blind approval)
+ *  - DEMO records can never be verified (demo/real boundary is not bypassable)
+ *  - the record must carry real provenance (sourceRef) — demo data has none
+ *  - every attempt (success or refusal) lands in CatalogEventLog; re-verifying
+ *    an already-verified record appends a new event (idempotent state, auditable act)
  * Verifying a DEPRECATED record is refused — deprecation and verification are
  * separate lifecycle states, and verification must not resurrect dead records.
  */
 export async function verifyRealPart(partId: string, adminUserId: string, evidenceUrl?: string) {
   const part = await prisma.part.findUnique({
     where: { id: partId },
-    select: { id: true, slug: true, dataStatus: true },
+    select: { id: true, slug: true, dataStatus: true, sourceRef: true },
   });
   if (!part) return { ok: false as const, reason: "PART_NOT_FOUND" as const };
   if (part.dataStatus === "DEPRECATED") return { ok: false as const, reason: "DEPRECATED" as const };
-  await prisma.part.update({
-    where: { id: partId },
-    data: {
-      dataStatus: "VERIFIED",
-      verifiedAt: new Date(),
-      verifiedBy: adminUserId,
-      dataVersion: { increment: 1 },
-      ...(evidenceUrl ? { sourceUrl: evidenceUrl } : {}),
-    },
-  });
+  if (part.dataStatus === "DEMO") return { ok: false as const, reason: "DEMO_PART" as const };
+  if (!evidenceUrl?.trim()) return { ok: false as const, reason: "EVIDENCE_REQUIRED" as const };
+  if (!part.sourceRef) return { ok: false as const, reason: "NO_SOURCE_REF" as const };
+  const evidence = evidenceUrl.trim();
+  await prisma.$transaction([
+    prisma.part.update({
+      where: { id: partId },
+      data: {
+        dataStatus: "VERIFIED",
+        verifiedAt: new Date(),
+        verifiedBy: adminUserId,
+        sourceUrl: evidence,
+        dataVersion: { increment: 1 },
+      },
+    }),
+    prisma.catalogEventLog.create({
+      data: {
+        partId,
+        actor: adminUserId,
+        event: "catalog_verified",
+        entity: "Part",
+        entityId: partId,
+        meta: { fromState: part.dataStatus, toState: "VERIFIED", evidenceUrl: evidence },
+      },
+    }),
+  ]);
   return { ok: true as const, slug: part.slug, dataStatus: "VERIFIED" as const };
 }
 
-/** Re-open a verified record for review (verification is reversible, but auditable). */
-export async function reopenVerification(partId: string, adminUserId: string) {
-  const part = await prisma.part.findUnique({ where: { id: partId }, select: { dataStatus: true } });
-  if (!part) return { ok: false as const, reason: "PART_NOT_FOUND" as const };
-  await prisma.part.update({
+/**
+ * Re-open a verified record for review (verification is reversible, but
+ * auditable): the history stays in CatalogEventLog — a reopen must never
+ * erase who verified what, when, and against which evidence.
+ */
+export async function reopenVerification(partId: string, adminUserId: string, note?: string) {
+  const part = await prisma.part.findUnique({
     where: { id: partId },
-    data: {
-      dataStatus: "REVIEW_REQUIRED",
-      verifiedAt: null,
-      verifiedBy: null,
-      dataVersion: { increment: 1 },
-    },
+    select: { id: true, dataStatus: true },
   });
+  if (!part) return { ok: false as const, reason: "PART_NOT_FOUND" as const };
+  await prisma.$transaction([
+    prisma.part.update({
+      where: { id: partId },
+      data: {
+        dataStatus: "REVIEW_REQUIRED",
+        verifiedAt: null,
+        verifiedBy: null,
+        dataVersion: { increment: 1 },
+      },
+    }),
+    prisma.catalogEventLog.create({
+      data: {
+        partId,
+        actor: adminUserId,
+        event: "catalog_verification_reopened",
+        entity: "Part",
+        entityId: partId,
+        meta: { fromState: part.dataStatus, toState: "REVIEW_REQUIRED", note: note ?? null },
+      },
+    }),
+  ]);
   return { ok: true as const, slug: partId, dataStatus: "REVIEW_REQUIRED" as const };
 }

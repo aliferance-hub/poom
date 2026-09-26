@@ -12,7 +12,7 @@ import { applyAsSeller, createSellerOffer } from "@/lib/seller/seller-onboarding
 import { updateSellerOffer } from "@/lib/seller/seller-offers";
 import { updateSellerProfile } from "@/lib/seller/seller-service";
 import { parseSellerInventoryCsv } from "@/lib/seller/seller-csv";
-import { fitmentPresentationReason, FITMENT_REVIEW_FA } from "@/lib/fitment";
+import { fitmentPresentationReason, FITMENT_REVIEW_FA, FITMENT_VERIFIED_RULE_FA } from "@/lib/fitment";
 import { transitionSellerStatus } from "@/lib/governance";
 import { createCheckout, settleMockPayment } from "@/lib/checkout";
 import { addToCart } from "@/lib/cart";
@@ -498,8 +498,14 @@ describe("P2-G audit findings (M-1 seller-SKU uniqueness, L-2 self-governance, L
       expect(shown).not.toContain("سازگار است");
     }
 
-    // verified / demo rows are deterministic — the engine sentence stands
-    expect(fitmentPresentationReason("COMPATIBLE", "VERIFIED", engineClaim)).toBe(engineClaim);
+    // P2-I (I5): a VERIFIED record gets the evidence-scoped sentence — it may
+    // state rule+verified match but still never the bare definitive claim.
+    const verifiedShown = fitmentPresentationReason("COMPATIBLE", "VERIFIED", engineClaim);
+    expect(verifiedShown).toBe(FITMENT_VERIFIED_RULE_FA);
+    expect(verifiedShown).not.toBe(engineClaim);
+    expect(verifiedShown).toContain("تأییدشده");
+
+    // demo rows are deterministic — the engine sentence stands (demo world)
     expect(fitmentPresentationReason("COMPATIBLE", "DEMO", engineClaim)).toBe(engineClaim);
 
     // non-compatible verdicts pass through untouched (no softening, no rewriting)

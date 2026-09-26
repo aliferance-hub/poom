@@ -239,6 +239,7 @@ model Part {
   meshMappings         MeshMapping[]
   relatedFrom          RelatedPart[]    @relation("RelatedSource")
   relatedTo            RelatedPart[]    @relation("RelatedTarget")
+  catalogEvents        CatalogEventLog[]
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
 
@@ -431,6 +432,25 @@ model SellerEventLog {
   createdAt DateTime @default(now())
 
   @@index([sellerId, createdAt])
+  @@index([event])
+}
+
+// P2-I (I4): catalog lifecycle audit — every verification / reopen / deprecate /
+// promotion state change on a real catalog record. Part columns (verifiedAt/
+// verifiedBy) keep only the CURRENT state; this log keeps the history so a
+// reopen can never erase who verified what, when, and against which evidence.
+model CatalogEventLog {
+  id        String   @id @default(cuid())
+  partId    String
+  part      Part     @relation(fields: [partId], references: [id], onDelete: Cascade)
+  actor     String // admin userId or "promotion:<runId>"
+  event     String // catalog_verified | catalog_verification_reopened | catalog_deprecated | catalog_promoted
+  entity    String   @default("Part")
+  entityId  String?
+  meta      Json? // { fromState, toState, evidenceUrl, note, manifestId, … }
+  createdAt DateTime @default(now())
+
+  @@index([partId, createdAt])
   @@index([event])
 }
 

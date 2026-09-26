@@ -95,7 +95,7 @@ describe("P2-F F4: real-206 fitment through the central engine", () => {
     expect(no.bestRule?.fitmentStatus).toBe("REJECTED");
   });
 
-  it("oil filter (documented OE 1109.AX) resolves COMPATIBLE with engine context", async () => {
+  it("oil filter resolves COMPATIBLE with engine context (no OE identifier attached — unconfirmable claims removed, P2-I)", async () => {
     await ensureRules();
     const vehicle = await prisma.vehicle.findFirstOrThrow({ where: { model: "206" } });
     const t5 = await prisma.vehicleVariant.findFirstOrThrow({ where: { vehicleId: vehicle.id, trim: "تیپ ۵" } });

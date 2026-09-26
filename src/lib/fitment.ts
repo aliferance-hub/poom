@@ -282,9 +282,21 @@ export const FITMENT_BADGE: Record<FitmentResult["status"], string> = {
   INCOMPATIBLE: "bg-red-100 text-red-700",
 };
 
-/** Explanation shown when a COMPATIBLE verdict is softened for unverified catalog data. */
+/**
+ * Explanation shown when a COMPATIBLE verdict needs scoping to its evidence.
+ * P2-I (I5): two distinct honest wordings —
+ *  - unverified record: the rule matched, but the CATALOG data itself is not
+ *    admin-verified yet (no definitive claim is possible);
+ *  - verified record: the rule matched and the record is verified, but the
+ *    claim is still only as strong as its cited rule (a generic maintenance
+ *    rule is NOT a documented per-variant guarantee). Never add certainty
+ *    the evidence does not carry.
+ */
 export const FITMENT_REVIEW_FA =
   "قانون سازگاری برای این خودرو با قطعه مطابقت دارد، اما داده‌ی کاتالوگ این قطعه هنوز توسط ادمین تأیید نشده است؛ تأیید نهایی نیازمند بررسی است.";
+
+export const FITMENT_VERIFIED_RULE_FA =
+  "بر اساس قانون ثبت‌شده و داده‌ی تأییدشده‌ی کاتالوگ با این خودرو مطابقت دارد؛ برای اطمینان نهایی، مشخصات قطعه را با خودروی خود تطبیق دهید.";
 
 /**
  * P2-G audit fix (HIGH): the explanation shown beside a verdict must never be
@@ -299,5 +311,7 @@ export function fitmentPresentationReason(
   partDataStatus: string | null | undefined,
   reasonFa: string,
 ): string {
-  return fitmentPresentation(status, partDataStatus) === "REVIEW_REQUIRED" ? FITMENT_REVIEW_FA : reasonFa;
+  if (fitmentPresentation(status, partDataStatus) === "REVIEW_REQUIRED") return FITMENT_REVIEW_FA;
+  if (partDataStatus === "VERIFIED") return FITMENT_VERIFIED_RULE_FA; // evidence-scoped, never overstated (P2-I I5)
+  return reasonFa;
 }
