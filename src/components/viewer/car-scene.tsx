@@ -99,6 +99,10 @@ function CameraRig({ contract, activeZone, focusPart, resetSignal, reduced }: {
 }) {
   const camera = useThreeSafeCamera();
   const controls = useThreeSafeControls();
+  // resetSignal is intentionally a dependency: a reset must recompute `dest`
+  // (new object reference) even when zone/part are unchanged, so the useEffect
+  // below re-triggers the camera animation. Verified intentional (P2-H H11).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const dest = useMemo(() => cameraFor(contract, activeZone, focusPart ?? undefined), [contract, activeZone, focusPart, resetSignal]);
   const moving = useRef(false);
   useEffect(() => { moving.current = true; }, [dest, resetSignal]);

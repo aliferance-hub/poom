@@ -3,6 +3,23 @@
 import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
+// P2-H (H14): production guard. This seed writes DEMO data and would flip the
+// active 3D asset version (v1 demo placeholder) over any real active version.
+// It must never run against a non-local database or in a production context —
+// unless explicitly forced with ALLOW_DEMO_SEED=1 (use with extreme care).
+const __dbHost = (() => {
+  try { return new URL(process.env.DATABASE_URL ?? '').hostname; } catch { return ''; }
+})();
+const __isLocalDb = __dbHost === '127.0.0.1' || __dbHost === 'localhost' || __dbHost === '::1' || __dbHost === '';
+if ((!__isLocalDb || process.env.NODE_ENV === 'production') && process.env.ALLOW_DEMO_SEED !== '1') {
+  console.error(
+    `✘ seed aborted: target database host "${__dbHost || '(unset)'}" is not local` +
+    ' and this seed writes DEMO data (it would also flip the ACTIVE asset version).' +
+    ' Set ALLOW_DEMO_SEED=1 only if you truly intend to seed demo data there.'
+  );
+  process.exit(1);
+}
+
 const ZONES = [
   { key: 'engine',     title: 'موتور',            desc: 'بلوک، سرسیلندر و متعلقات موتور' },
   { key: 'cooling',    title: 'سیستم خنک‌کاری',    desc: 'رادیاتور، فن و قطعات خنک‌کاری' },

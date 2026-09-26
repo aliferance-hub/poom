@@ -2,10 +2,11 @@
  * DEMO trust boundary (MVP) — AUDIT FIX H2 (adversarial review): the demo-trust
  * shim accepted ANY caller in non-production, i.e. every customer could mutate
  * catalog, fitment and 3D mappings. It is now a BRIDGE: it accepts either a
- * real ADMIN session (role enforced) or, purely inside explicit demo mode,
- * unauthenticated callers so the demo keeps working until every admin surface
- * is migrated to requireAdmin(). Production (NODE_ENV=production) requires a
- * real admin session — demo bypass is impossible there.
+ * real ADMIN session (role enforced) or, purely in NON-PRODUCTION, unauthenticated
+ * callers so the demo keeps working until every admin surface is migrated to
+ * requireAdmin(). Production (NODE_ENV=production) requires a real admin
+ * session — demo bypass is impossible there (tightened in P2-H; MOCK_PAYMENTS
+ * no longer widens this gate in production).
  *
  * NOTE: this file intentionally has NO "use server" directive — it is a plain
  * server-only helper module (Next.js requires every export of a "use server"
@@ -30,7 +31,11 @@ export async function isAdminSession(): Promise<boolean> {
 
 export async function assertDemoTrust(): Promise<void> {
   if (await isAdminSession()) return;
-  const demo = process.env.MOCK_PAYMENTS === "1" || process.env.NODE_ENV !== "production";
+  // P2-H (H19): demo bypass is a NON-PRODUCTION convenience only. The previous
+  // condition also honored MOCK_PAYMENTS=1 in production, which left admin
+  // mutation surfaces anonymously open there — contradicting this file's own
+  // contract. Production now requires a real ADMIN session, full stop.
+  const demo = process.env.NODE_ENV !== "production";
   if (!demo) throw new Error("AUTH_REQUIRED: admin mutations require an authenticated ADMIN session");
 }
 

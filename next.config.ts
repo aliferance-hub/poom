@@ -1,8 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // R3F/three ship modern ESM that next handles fine, but keep strict defaults.
-  eslint: { ignoreDuringBuilds: true },
+  // P2-H (H11): ESLint now runs during builds (was disabled at MVP). Flat
+  // config lives in eslint.config.mjs; baseline is 0 errors / 1 documented
+  // intentional warning. Keep the build red on real lint regressions.
+  eslint: { ignoreDuringBuilds: false },
   experimental: {
     // keep server actions default; no special flags needed for MVP
   },

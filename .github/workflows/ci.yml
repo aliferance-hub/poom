@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # P2-H (H10): deterministic, dependency-free Postgres service container.
+    # DATABASE_URL is workflow-local and never a production secret; CI never
+    # runs migrations against production (H3).
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/poom
+      NODE_ENV: test
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: poom
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      # Schema sync for the ephemeral test DB. This is NOT a production
+      # migration run and uses no migration history.
+      - name: Push schema to test database
+        run: npx prisma db push --skip-generate
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Lint (0 errors required)
+        run: npx eslint src prisma
+
+      - name: Tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+        env:
+          NODE_ENV: production

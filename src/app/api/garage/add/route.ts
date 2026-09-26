@@ -10,7 +10,16 @@ import { safeBack } from "@/app/api/garage/route-handlers";
  */
 export async function POST(req: NextRequest) {
   const sid = await getSessionId();
-  const form = await req.formData();
+  // P2-H (H17): malformed bodies must not surface as 500s — the form contract
+  // reports failures through the ?error= redirect parameter.
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    const back = new URL(safeBack(req), req.nextUrl);
+    back.searchParams.set("error", "INVALID");
+    return NextResponse.redirect(back, { status: 303 });
+  }
   const variantId = String(form.get("variantId") ?? "");
   const yearRaw = String(form.get("year") ?? "");
   const nicknameRaw = String(form.get("nickname") ?? "").trim();
@@ -21,11 +30,18 @@ export async function POST(req: NextRequest) {
     back.searchParams.set("error", "INVALID");
     return NextResponse.redirect(back, { status: 303 });
   }
-  const created = await createSavedVehicle(sid, {
-    variantId,
-    year: year != null && Number.isInteger(year) ? year : null,
-    nickname: nicknameRaw || null,
-  });
+  let created: Awaited<ReturnType<typeof createSavedVehicle>>;
+  try {
+    created = await createSavedVehicle(sid, {
+      variantId,
+      year: year != null && Number.isInteger(year) ? year : null,
+      nickname: nicknameRaw || null,
+    });
+  } catch {
+    // Unknown variantId (FK violation) or malformed year — deterministic failure.
+    back.searchParams.set("error", "INVALID");
+    return NextResponse.redirect(back, { status: 303 });
+  }
   if (created.ok) {
     if (form.get("activate") === "1") {
       const act = await activateSavedVehicle(sid, created.id);

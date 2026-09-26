@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { createHash } from "node:crypto";
+import { getAssetStorage } from "@/lib/storage";
+import { StorageError } from "@/lib/storage/types";
 
 // ─────────────────────────── lifecycle ───────────────────────────
 
@@ -51,17 +53,41 @@ export async function createAssetVersion(input: {
     intendedUsage: input.license?.intendedUsage ?? null,
   };
 
+  let objectKey: string | null = null;
   if (input.fileBuffer) {
-    data.filePath = `uploads/assets/${asset.assetId}/v${nextVersion}/${sanitizeName(input.fileName ?? "model.glb")}`;
-    // Web-root absolute URL: GLTFLoader resolves relative URLs against the current
-    // route (/parts/...), which 404s. FS consumers use filePath; the browser uses fileUrl.
-    data.fileUrl = `/${data.filePath}`;
+    objectKey = `uploads/assets/${asset.assetId}/v${nextVersion}/${sanitizeName(input.fileName ?? "model.glb")}`;
+    data.filePath = objectKey;
     data.fileSize = input.fileBuffer.length;
     data.mimeType = input.mimeType ?? guessMime(input.fileName ?? "");
     data.checksumSha256 = sha256(input.fileBuffer);
+
+    // P2-H (H5): storage owns the binary. Upload BEFORE the DB write; a failed
+    // DB create then leaves an orphan object — harmless and detectable via the
+    // H8 reconciliation checks (storage_objects_without_asset_version).
+    const storage = getAssetStorage();
+    try {
+      await storage.upload(objectKey, input.fileBuffer, {
+        contentType: data.mimeType ?? "application/octet-stream",
+      });
+    } catch (e) {
+      // Deterministic failure mapping (H17): no raw provider errors escape.
+      if (e instanceof StorageError && e.code === "OBJECT_EXISTS") {
+        throw new Error("OBJECT_EXISTS: immutable key already holds an object");
+      }
+      throw e instanceof StorageError ? new Error(e.code) : e;
+    }
+    // fileUrl stored as provenance snapshot; resolveContract() derives the live URL.
+    data.fileUrl = storage.getPublicUrl(objectKey);
   }
 
-  return prisma.assetVersion.create({ data });
+  try {
+    return await prisma.assetVersion.create({ data });
+  } catch (e) {
+    // P2-H (H8) compensating behavior: DB write failed after a successful
+    // upload → remove the orphan object, then rethrow the original error.
+    if (objectKey) await getAssetStorage().delete(objectKey).catch(() => {});
+    throw e;
+  }
 }
 
 /** DRAFT/READY → PROCESSING (simulate validation pipeline; GLB magic check when a buffer exists). */
@@ -180,9 +206,8 @@ export type AssetContractV2 = {
   format: string;
   source: string;
   /** P2-F (F1): URL for the active version's file. `null` = placeholder geometry;
-   *  an uploaded GLB is served from public/ with a web-root ABSOLUTE URL always
-   *  derived from filePath — GLTFLoader resolves relative URLs against the current
-   *  route (/parts/...), which 404s. The stored fileUrl remains provenance. */
+   *  P2-H (H5): derived through the storage adapter (Supabase public URL in
+   *  production, web-root path in dev). The stored fileUrl remains provenance. */
   fileUrl: string | null;
   checksumSha256: string | null;
   license: {
@@ -212,6 +237,23 @@ function vec3(v: unknown): [number, number, number] | null {
   return Array.isArray(v) && v.length >= 3 && v.every((x) => typeof x === "number")
     ? [v[0] as number, v[1] as number, v[2] as number]
     : null;
+}
+
+/**
+ * P2-H (H5/H8): browser URL derived through the storage adapter. If the object
+ * is not in storage (e.g. the legacy tracked v2 GLB has not been backfilled
+ * yet — surfaced by reconcileStorage() as asset_versions_without_storage),
+ * fall back to the web-root path so the active viewer keeps rendering while
+ * the backfill is pending. Storage errors never break rendering.
+ */
+async function deriveFileUrl(key: string): Promise<string> {
+  try {
+    const storage = getAssetStorage();
+    if (await storage.exists(key)) return storage.getPublicUrl(key);
+  } catch {
+    // storage unconfigured/unreachable → static fallback below
+  }
+  return `/${key}`;
 }
 
 /**
@@ -271,7 +313,7 @@ export async function resolveContract(vehicleId: string): Promise<AssetContractV
     format: asset.format,
     source: asset.source,
     fileUrl: version.filePath && !version.filePath.startsWith("builtin:")
-      ? `/${version.filePath}`
+      ? await deriveFileUrl(version.filePath)
       : null,
     checksumSha256: version.checksumSha256 ?? null,
     license: {
