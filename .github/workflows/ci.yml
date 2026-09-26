@@ -52,6 +52,11 @@ jobs:
       - name: Push schema to test database
         run: npx prisma db push --skip-generate
 
+      # The suite is DB-backed (demo fixtures). The H14 seed guard permits
+      # this because the CI database host is genuinely local (127.0.0.1).
+      - name: Seed test database
+        run: node prisma/seed.mjs
+
       - name: TypeScript check
         run: npm run typecheck
 
