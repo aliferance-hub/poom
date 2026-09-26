@@ -25,6 +25,7 @@ export default async function AdminPage() {
         <h1 className="text-xl font-bold">پنل ادمین (DEMO)</h1>
         <div className="flex gap-2 text-sm">
           <Link href="/admin/fitment" className="btn-ghost">مدیریت سازگاری</Link>
+          <Link href="/admin/inquiries" className="btn-ghost">استعلام‌ها</Link>
           <Link href="/admin/parts" className="btn-ghost">قطعات</Link>
           <Link href="/admin/categories" className="btn-ghost">دسته‌بندی‌ها</Link>
           <Link href="/admin/vehicles" className="btn-ghost">خودروها</Link>

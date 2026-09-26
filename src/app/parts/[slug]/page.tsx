@@ -17,6 +17,7 @@ import { getSessionId } from "@/lib/session";
 import { getActiveVehicleContext } from "@/lib/vehicle";
 import { formatToman, toPersianDigits } from "@/lib/persian";
 import { AddToCartButton } from "@/components/add-to-cart-button";
+import { InquiryForm } from "@/components/inquiry-form";
 
 type Props = {
   params: Promise<{ slug: string }>;
@@ -251,6 +252,15 @@ export default async function PartPage({ params, searchParams }: Props) {
               <div className="mt-1 text-[10px] text-black/35">تمام شناسه‌ها DEMO هستند و به هیچ کد واقعی اشاره نمی‌کنند.</div>
             </div>
           )}
+
+          {/* P3.1: استعلام قطعه — اگر این قطعه نبود یا موجود نبود، بازدیدکننده درخواست تماس ثبت می‌کند */}
+          <div className="card p-4" id="inquiry">
+            <h2 className="mb-1 font-semibold">پیدا نکردید؟ استعلام بدهید</h2>
+            <p className="mb-3 text-xs text-black/55">
+              اگر این قطعه موجود نیست یا مدلتان با فهرست سازگاری نمی‌خواند، درخواست تماس بگذارید تا بررسی کنیم.
+            </p>
+            <InquiryForm partSlug={part.slug} partTitle={part.title} compact />
+          </div>
 
           {related.length > 0 && (
             <div className="card p-4">

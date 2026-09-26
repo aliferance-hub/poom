@@ -653,6 +653,7 @@ model AssetVersion {
 
 // Phase 2 (P2-A): one unified, version-scoped mesh mapping table.
 // A mapping targets exactly one of zone/assembly/part — enforced in the service layer.
+// (P3.1: PartInquiry uses no relations by design — it survives part deletions.)
 model MeshMapping {
   id        String       @id @default(cuid())
   versionId String
@@ -861,4 +862,32 @@ model Refund {
   failureReason    String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
+}
+
+// ═══════════════════════════ P3.1: part inquiries (استعلام قطعه) ═══════════════════════════
+// Visitors who cannot find a part ask for it; the shop owner sees new rows
+// in the DB (and later an admin panel). No auth, no session requirement.
+
+enum PartInquiryStatus {
+  NEW
+  IN_REVIEW
+  RESOLVED
+  REJECTED
+}
+
+model PartInquiry {
+  id           String            @id @default(cuid())
+  status       PartInquiryStatus @default(NEW)
+  name         String
+  phone        String
+  note         String?
+  partSlug     String? // set when submitted from a part page
+  partTitle    String? // denormalized for quick scanning in the admin view
+  sessionId    String? // present when the visitor has a poom_session cookie
+  createdAt    DateTime          @default(now())
+  resolvedAt   DateTime?
+  resolvedNote String?
+
+  @@index([status, createdAt])
+  @@index([phone])
 }
