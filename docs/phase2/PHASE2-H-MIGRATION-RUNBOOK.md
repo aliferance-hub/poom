@@ -123,3 +123,14 @@ Prisma has no down-migrations. Policy:
    — if ever needed, apply it via the emergency path (session psql, autocommit)
    and `resolve --applied`, documenting why.
 5. Migration names carry the phase prefix (`p2x_…`, `p31_…`) for traceability.
+6. Migration execution order is **alphabetical by folder name**. Every new
+   migration must sort AFTER the migrations it depends on
+   (`20260926_p99_…` was renamed from `_p2h_…` for exactly this reason —
+   its RLS statements reference the `PartInquiry` table created by `p31_…`).
+7. Supabase hardening migrations: the RLS baseline
+   (`20260926_p99_rls_baseline`) enables row-level security with an empty
+   policy set and revokes the blanket `anon`/`authenticated` grants. Any
+   FUTURE table must be added to this baseline (or get its own RLS+grants
+   migration), because Supabase default privileges re-grant to new tables.
+   If client-side PostgREST access is ever introduced, explicit per-table
+   policies are mandatory before shipping.
