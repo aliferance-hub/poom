@@ -13,6 +13,9 @@ jobs:
     # runs migrations against production (H3).
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/poom
+      # schema.prisma requires directUrl to RESOLVE even for local DB ops
+      # (no pooling distinction on the ephemeral test DB — same endpoint).
+      DIRECT_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/poom
       NODE_ENV: test
     services:
       postgres:
