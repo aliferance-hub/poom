@@ -5,7 +5,7 @@
   "description": "POOM — Visual 3D automotive parts marketplace (MVP vertical slice, demo data only)",
   "scripts": {
     "dev": "next dev -p 3010",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start -p 3010",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
