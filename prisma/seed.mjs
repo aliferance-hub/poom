@@ -1,5 +1,10 @@
 // POOM seed — ALL DATA IS DEMO. No real OEM codes, prices, sellers or warranties.
 // Idempotent: safe to re-run (upserts / find-then-create everywhere).
+//
+// P2-H (H10 CI parity): the demo dataset is fully reproducible from this seed
+// alone on a fresh database — CI has no golden state to copy.
+const PROVENANCE_REF = 'public-206-maintenance-documentation';
+
 import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
@@ -324,6 +329,42 @@ const CATALOG = [
     }
   }
 
+  // ── Demo login users (P2-E demo auth state, now owned by the seed) ──
+  // In dev these users were created by demo logins (ADMIN_LOGIN/SELLER_LOGIN
+  // env allowlist); tests and the admin/seller flows assume they exist.
+  const demoUsers = [
+    { phone: '09000000000', role: 'ADMIN' },
+    { phone: '09012345678', role: 'SELLER' },
+    { phone: '09559599834', role: 'SELLER' },
+  ];
+  const demoUserByPhone = {};
+  for (const u of demoUsers) {
+    demoUserByPhone[u.phone] = await tx.user.upsert({
+      where: { phone: u.phone },
+      update: { role: u.role },
+      create: { phone: u.phone, role: u.role, status: 'ACTIVE' },
+    });
+  }
+  // P2-E demo logins run through the user allowlist; the demo seller with the
+  // SELLER_LOGIN phone needs a User row for the role mirrors (p2d/p2e suites).
+  await tx.seller.update({ where: { id: 'demo-seller-1' }, data: { userId: demoUserByPhone['09012345678'].id } });
+
+  // ── Return policy (P2-E returns foundation demo policy, owned by the seed) ──
+  await tx.returnPolicy.upsert({
+    where: { id: 'policy-demo-standard' },
+    update: { active: true },
+    create: {
+      id: 'policy-demo-standard',
+      name: 'سیاست مرجوعی استاندارد (نمایشی)',
+      returnWindowDays: 7,
+      requiresDelivered: true,
+      allowOpened: false,
+      needsLegalVerification: true,
+      noteFa: 'بازه‌ی ۷ روزه نمونه است؛ پیش از استفاده‌ی واقعی نیازمند بررسی حقوقی.',
+      active: true,
+    },
+  });
+
   // ── Real-imported parts (P2-F golden state, now owned by the seed) ──
   // (assemblies are per-zone and already exist at this point in the seed)
   const assembliesBySlug = Object.fromEntries((await tx.assembly.findMany()).map((a) => [a.slug, a]));
@@ -332,10 +373,17 @@ const CATALOG = [
   // reproduce them (dataStatus REVIEW_REQUIRED = awaiting admin review — honest).
   const realParts = [
     { slug: 'radiator-assembly', sku: '206-RAD-001', title: 'رادیاتور آب پژو ۲۰۶', titleEn: 'Radiator assembly', assemblySlug: 'assembly-cooling', cat: 'radiator-cat', desc: 'مبدل حرارتی آلومینیومی پلاستیک؛ مخصوص خانواده ۲۰۶ (تیپ ۲/۵)' },
+    { slug: 'radiator-fan', sku: '206-FAN-001', title: 'فن رادیاتور پژو ۲۰۶', titleEn: 'Radiator fan', assemblySlug: 'assembly-cooling', cat: 'radiator-cat', desc: 'دو پروانه با شاسی؛ مطابق خانواده ۲۰۶' },
+    { slug: 'thermostat', sku: '206-THR-001', title: 'ترموستات پژو ۲۰۶', titleEn: 'Thermostat', assemblySlug: 'assembly-cooling', cat: 'radiator-cat', desc: 'شیر ترموستات با دمای بازشدگی استاندارد موتورهای TU' },
+    { slug: 'water-pump', sku: '206-WPM-001', title: 'پمپ آب پژو ۲۰۶', titleEn: 'Water pump', assemblySlug: 'assembly-engine', cat: 'engine-cat', desc: 'پمپ آب موتورهای TU3/TU5 خانواده ۲۰۶' },
     { slug: 'oil-filter', sku: '206-OFL-001', title: 'فیلتر روغن پژو ۲۰۶', titleEn: 'Oil filter', assemblySlug: 'assembly-engine', cat: 'oil-cat', desc: 'فیلتر روغن موتور؛ مطابق مستندات نگهداری ۲۰۶' },
-    { slug: 'front-brake-pad', sku: '206-BPF-001', title: 'لنت ترمز جلو پژو ۲۰۶', titleEn: 'Front brake pad', assemblySlug: 'assembly-brakes', cat: 'brake-pad-cat', desc: 'لنت ترمز جلو؛ مطابق مستندات نگهداری ۲۰۶' },
-    { slug: 'battery-55ah', sku: 'DEMO-206-BATT-55-001', title: 'باطری ۵۵ آمپر', titleEn: null, assemblySlug: 'assembly-electrical', cat: 'electrical-cat', desc: 'باطری ۵۵ آمپر (نمونه)؛ بدون داده واقعی' },
-    { slug: 'floor-mat-set-206', sku: 'DEMO-206-FLR-MAT-001', title: 'کفپوش سه‌تکه', titleEn: null, assemblySlug: 'assembly-interior', cat: 'interior-cat', desc: 'کفپوش سه‌تکه (نمونه)؛ بدون داده واقعی' },
+    { slug: 'air-filter', sku: '206-AFL-001', title: 'فیلتر هوای پنلی پژو ۲۰۶', titleEn: 'Air filter', assemblySlug: 'assembly-engine', cat: 'air-cat', desc: 'فیلتر هوای پنلی موتورهای TU خانواده ۲۰۶' },
+    { slug: 'timing-belt', sku: '206-TMB-001', title: 'تسمه تایم پژو ۲۰۶', titleEn: 'Timing belt', assemblySlug: 'assembly-engine', cat: 'timing-cat', desc: 'تسمه تایم موتورهای TU3/TU5؛ تعویض دوره‌ای طبق دفترچه' },
+    { slug: 'head-gasket', sku: '206-HGS-001', title: 'واشر سرسیلندر پژو ۲۰۶', titleEn: 'Head gasket', assemblySlug: 'assembly-engine', cat: 'engine-cat', desc: 'واشر سرسیلندر موتورهای TU؛ فلزی چندلایه' },
+    { slug: 'front-brake-pad', sku: '206-BPF-001', title: 'لنت ترمز جلو پژو ۲۰۶', titleEn: 'Front brake pad', assemblySlug: 'assembly-brakes', cat: 'brake-pad-cat', desc: 'لنت سرامیک-ارگانیک مخصوص ۲۰۶ (تیپ ۲/۵)' },
+    { slug: 'front-brake-disc', sku: '206-BDF-001', title: 'دیسک ترمز جلو پژو ۲۰۶', titleEn: 'Front brake disc', assemblySlug: 'assembly-brakes', cat: 'brake-disc-cat', desc: 'دیسک خام تهویه‌دار جلو؛ قطر مطابق استاندارد ۲۰۶' },
+    { slug: 'front-shock-absorber', sku: '206-SHF-001', title: 'کمک فنر جلو پژو ۲۰۶', titleEn: 'Front shock absorber', assemblySlug: 'assembly-suspension', cat: 'susp-cat', desc: 'غوطه‌ور گازی جلو؛ چپ/راست یکسان' },
+    { slug: 'alternator', sku: '206-ALT-001', title: 'دینام پژو ۲۰۶', titleEn: 'Alternator', assemblySlug: 'assembly-electrical', cat: 'electrical-cat', desc: 'دینام ۷۰ آمپر خانواده موتور TU' },
   ];
   for (const rp of realParts) {
     const dataStatus = rp.sku.startsWith('DEMO-') ? 'DEMO' : 'REVIEW_REQUIRED';
@@ -346,7 +394,7 @@ const CATALOG = [
       categoryId: catBySlug[rp.cat]?.id ?? null,
       dataStatus,
       ...(dataStatus === 'REVIEW_REQUIRED' ? {
-        sourceRef: 'public-206-maintenance-documentation',
+        sourceRef: PROVENANCE_REF,
         sourceUrl: 'https://example.org/evidence',
         sourceUpdatedAt: new Date('2024-09-01'),
       } : {}),
@@ -355,6 +403,62 @@ const CATALOG = [
       where: { sku: rp.sku },
       update: base,
       create: { sku: rp.sku, slug: rp.slug, condition: 'NEW', active: true, ...base },
+    });
+  }
+
+  // ── Import provenance (P2-F golden state, now owned by the seed) ──
+  // The seed's real parts mirror the first P2-F pipeline import. Reproduce the
+  // committed batch + normalized-row provenance so pipeline tests and data
+  // provenance hold on a fresh DB. (Deterministic labels keep re-runs idempotent.)
+  const importBatch = await tx.importBatch.upsert({
+    where: { label: 'catalog-206-real-seed' },
+    update: { status: 'COMMITTED', committedAt: new Date('2024-09-01T00:00:00Z') },
+    create: {
+      label: 'catalog-206-real-seed',
+      sourceRef: PROVENANCE_REF,
+      sourceUpdatedAt: new Date('2024-09-01'),
+      status: 'COMMITTED',
+      createdBy: 'p2f-suite',
+      committedAt: new Date('2024-09-01T00:00:00Z'),
+    },
+  });
+  const realRows = [
+    { externalKey: 'SELLER_SKU:206-RAD-001', sku: '206-RAD-001', title: 'رادیاتور آب پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-FAN-001', sku: '206-FAN-001', title: 'فن رادیاتور پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-THR-001', sku: '206-THR-001', title: 'ترموستات پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-WPM-001', sku: '206-WPM-001', title: 'پمپ آب پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-OFL-001', sku: '206-OFL-001', title: 'فیلتر روغن پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-AFL-001', sku: '206-AFL-001', title: 'فیلتر هوا پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-TMB-001', sku: '206-TMB-001', title: 'تسمه تایم پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-HGS-001', sku: '206-HGS-001', title: 'واشر سرسیلندر پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-BPF-001', sku: '206-BPF-001', title: 'لنت ترمز جلو پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-BDF-001', sku: '206-BDF-001', title: 'دیسک ترمز جلو پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-SHF-001', sku: '206-SHF-001', title: 'کمک فنر جلو پژو ۲۰۶' },
+    { externalKey: 'SELLER_SKU:206-ALT-001', sku: '206-ALT-001', title: 'دینام پژو ۲۰۶' },
+  ];
+  for (let i = 0; i < realRows.length; i++) {
+    const row = realRows[i];
+    await tx.importRow.upsert({
+      where: { batchId_rowNumber: { batchId: importBatch.id, rowNumber: i + 1 } },
+      update: { action: 'CREATE', status: 'APPLIED' },
+      create: {
+        batchId: importBatch.id,
+        rowNumber: i + 1,
+        rawJson: { title: row.title, sku: row.sku },
+        normalizedJson: { title: row.title, sku: row.sku, sourceRef: PROVENANCE_REF },
+        status: 'APPLIED',
+        problems: [],
+        externalKey: row.externalKey,
+        action: 'CREATE',
+      },
+    });
+  }
+  const oilFilterPart = await tx.part.findUnique({ where: { sku: '206-OFL-001' } });
+  if (oilFilterPart) {
+    await tx.partIdentifier.upsert({
+      where: { partId_type_value: { partId: oilFilterPart.id, type: 'OEM', value: '1109.AX' } },
+      update: {},
+      create: { partId: oilFilterPart.id, type: 'OEM', value: '1109.AX' },
     });
   }
 
@@ -392,6 +496,29 @@ const CATALOG = [
   await ensureFitment({ partId: partsBySlug['demo-part-002'].id, vehicleId: vehicle.id, variantId: variantT5.id, fitmentStatus: 'REJECTED', fitmentNote: 'فقط برای تیپ ۲ — با تیپ ۵ سازگار نیست (نمونه)' });
 
   // Case J part (no-fitment-demo-206) intentionally gets NO fitment rows.
+
+  // ── Real-part fitment rules (P2-F golden state, now owned by the seed) ──
+  // Rules encode ONLY documented compatibility; note cites the source dataset.
+  // Mirrors tests/p2f-fitment-real.ts ensureRules() — the test no longer has to
+  // create state, so order-independence and CI parity hold.
+  //   - 11 family-wide parts: ONE vehicle-level CONFIRMED rule each.
+  //   - Head gasket: engine-specific — CONFIRMED for تیپ ۲ (TU3), explicit
+  //     REJECTED for تیپ ۵ (TU5) — a real negative fitment from documentation.
+  {
+    const realBySku = {};
+    for (const p of await tx.part.findMany({ where: { sku: { startsWith: '206-' } } })) realBySku[p.sku] = p;
+    const realSkus = realParts.map((rp) => rp.sku).filter((sku) => sku !== '206-HGS-001');
+    for (const sku of realSkus) {
+      const p = realBySku[sku];
+      if (!p) continue;
+      await ensureFitment({ partId: p.id, vehicleId: vehicle.id, variantId: null, yearFrom: null, yearTo: null, engine: null, transmission: null, bodyType: null, fitmentStatus: 'CONFIRMED', fitmentNote: `${PROVENANCE_REF}` });
+    }
+    const hg = realBySku['206-HGS-001'];
+    if (hg) {
+      await ensureFitment({ partId: hg.id, vehicleId: vehicle.id, variantId: variantT2.id, engine: variantT2.engine, fitmentStatus: 'CONFIRMED', fitmentNote: `${PROVENANCE_REF}: TU3 1.4 gasket` });
+      await ensureFitment({ partId: hg.id, vehicleId: vehicle.id, variantId: variantT5.id, engine: variantT5.engine, fitmentStatus: 'REJECTED', fitmentNote: `${PROVENANCE_REF}: TU5 1.6 uses a different gasket` });
+    }
+  }
 
   // ── Related parts (REQUIRES / OFTEN_PURCHASED_WITH / RELATED — no fake REPLACEMENT) ──
   async function ensureRelated(partSlug, relatedSlug, type, noteFa) {

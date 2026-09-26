@@ -122,13 +122,27 @@ describe("seller isolation", () => {
   });
 
   it("getSellerOrders only returns own suborders", async () => {
-    const mine = await getSellerOrders(SELLER_A);
-    const foreign = await prisma.sellerOrder.findFirst({
-      where: { sellerId: { not: SELLER_A } },
-      select: { id: true },
+    // Hermetic fixture: the isolation target must not depend on residual rows
+    // from other suites — create a dedicated foreign suborder (P2-H CI parity).
+    const foreignOrder = await prisma.order.create({
+      data: {
+        orderNumber: `P2D-FGN-${Date.now()}`, status: "PAID", paymentStatus: "SUCCEEDED",
+        total: 1_600_000,
+        sellerOrders: {
+          create: {
+            sellerId: SELLER_B, status: "CONFIRMED", subtotal: 1_600_000, shipping: 0,
+            items: { create: { partId: csvPartId, offerId: offerBId, quantity: 1, unitPrice: 1_600_000, total: 1_600_000 } },
+          },
+        },
+      },
+      include: { sellerOrders: true },
     });
-    expect(foreign).toBeTruthy();
-    expect(mine.rows.some((r) => r.id === foreign!.id)).toBe(false);
+    createdOrderIds.push(foreignOrder.id);
+    const foreign = foreignOrder.sellerOrders[0]!;
+
+    const mine = await getSellerOrders(SELLER_A);
+    expect(mine.rows.some((r) => r.id === foreign.id)).toBe(false);
+    expect(mine.rows.some((r) => r.id === orderAId)).toBe(true);
   });
 
   it("seller profile update cannot touch verified/rating/status (whitelist)", async () => {
