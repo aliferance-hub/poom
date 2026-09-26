@@ -324,6 +324,40 @@ const CATALOG = [
     }
   }
 
+  // ── Real-imported parts (P2-F golden state, now owned by the seed) ──
+  // (assemblies are per-zone and already exist at this point in the seed)
+  const assembliesBySlug = Object.fromEntries((await tx.assembly.findMany()).map((a) => [a.slug, a]));
+  // These were created in dev by the P2-F import pipeline; the golden mapping
+  // tests and storefront affordances depend on them, so the seed must
+  // reproduce them (dataStatus REVIEW_REQUIRED = awaiting admin review — honest).
+  const realParts = [
+    { slug: 'radiator-assembly', sku: '206-RAD-001', title: 'رادیاتور آب پژو ۲۰۶', titleEn: 'Radiator assembly', assemblySlug: 'assembly-cooling', cat: 'radiator-cat', desc: 'مبدل حرارتی آلومینیومی پلاستیک؛ مخصوص خانواده ۲۰۶ (تیپ ۲/۵)' },
+    { slug: 'oil-filter', sku: '206-OFL-001', title: 'فیلتر روغن پژو ۲۰۶', titleEn: 'Oil filter', assemblySlug: 'assembly-engine', cat: 'oil-cat', desc: 'فیلتر روغن موتور؛ مطابق مستندات نگهداری ۲۰۶' },
+    { slug: 'front-brake-pad', sku: '206-BPF-001', title: 'لنت ترمز جلو پژو ۲۰۶', titleEn: 'Front brake pad', assemblySlug: 'assembly-brakes', cat: 'brake-pad-cat', desc: 'لنت ترمز جلو؛ مطابق مستندات نگهداری ۲۰۶' },
+    { slug: 'battery-55ah', sku: 'DEMO-206-BATT-55-001', title: 'باطری ۵۵ آمپر', titleEn: null, assemblySlug: 'assembly-electrical', cat: 'electrical-cat', desc: 'باطری ۵۵ آمپر (نمونه)؛ بدون داده واقعی' },
+    { slug: 'floor-mat-set-206', sku: 'DEMO-206-FLR-MAT-001', title: 'کفپوش سه‌تکه', titleEn: null, assemblySlug: 'assembly-interior', cat: 'interior-cat', desc: 'کفپوش سه‌تکه (نمونه)؛ بدون داده واقعی' },
+  ];
+  for (const rp of realParts) {
+    const dataStatus = rp.sku.startsWith('DEMO-') ? 'DEMO' : 'REVIEW_REQUIRED';
+    const base = {
+      title: rp.title, titleEn: rp.titleEn,
+      assemblyId: assembliesBySlug[rp.assemblySlug].id,
+      technicalDescription: rp.desc,
+      categoryId: catBySlug[rp.cat]?.id ?? null,
+      dataStatus,
+      ...(dataStatus === 'REVIEW_REQUIRED' ? {
+        sourceRef: 'public-206-maintenance-documentation',
+        sourceUrl: 'https://example.org/evidence',
+        sourceUpdatedAt: new Date('2024-09-01'),
+      } : {}),
+    };
+    await tx.part.upsert({
+      where: { sku: rp.sku },
+      update: base,
+      create: { sku: rp.sku, slug: rp.slug, condition: 'NEW', active: true, ...base },
+    });
+  }
+
   // ── Fitment matrix (P2-B test cases) ──
   // Deterministic reset: matrix parts define EXACTLY the rules below (removes rows
   // left by older seeds or test debris so re-running the seed is reproducible).
@@ -375,44 +409,96 @@ const CATALOG = [
   await ensureRelated('oil-filter-206', 'air-filter-206', 'OFTEN_PURCHASED_WITH', 'سرویس دوره‌ای همزمان (نمونه)');
 
   // ── 3D Asset Contract (current P2-A schema) ──
+  // P2-H (CI parity): the golden mapping state that P2-F created in dev is part
+  // of the demo dataset and must be reproducible from seed alone. v2 = the
+  // tracked engineering GLB version (ACTIVE), carrying part→assembly
+  // associations and hotspots/cameras; v1 stays the archived demo placeholder
+  // fallback. Single-active invariant preserved.
   const asset = await tx.asset.upsert({
     where: { assetId: 'peugeot-206-main-v1' },
     update: {},
     create: { assetId: 'peugeot-206-main-v1', vehicleId: vehicle.id, format: 'builtin', source: 'DEMO_PRIMITIVES' },
   });
-  const version = await tx.assetVersion.upsert({
-    where: { assetId_version: { assetId: asset.id, version: 1 } },
-    update: { status: 'ACTIVE' },
+
+  const partBySlug = async (slug) => {
+    const p = await tx.part.findUnique({ where: { slug } });
+    if (!p) throw new Error(`seed: expected part ${slug} to exist (see P2-H seed real-parts block)`);
+    return p;
+  };
+
+  // (b) tracked engineering GLB as v2 (ACTIVE) — filePath is the storage object key.
+  const V2_KEY = 'uploads/assets/peugeot-206-main-v1/v2/peugeot-206-engineering-v1.glb';
+  const v2 = await tx.assetVersion.upsert({
+    where: { assetId_version: { assetId: asset.id, version: 2 } },
+    update: { status: 'ACTIVE', activatedAt: new Date() },
     create: {
-      assetId: asset.id, version: 1, status: 'ACTIVE', filePath: 'builtin:placeholder-206',
-      licenseType: 'IN_REPO_DEMO', commercialUse: true, creator: 'POOM (demo)', activatedAt: new Date(),
+      assetId: asset.id, version: 2, status: 'ACTIVE', activatedAt: new Date(),
+      filePath: V2_KEY,
+      fileUrl: `/${V2_KEY}`,
+      fileSize: 1328846, mimeType: 'model/gltf-binary',
+      checksumSha256: '39d3d9d534b2c1e41523492273c37d16380973b2d54dd63d19c593507dbd243f',
+      licenseType: 'CC-BY-4.0', commercialUse: true,
+      creator: 'POOM demo engineering model',
+      sourceUrl: 'https://github.com/aliferance-hub/poom',
+      acquiredAt: new Date('2026-09-20'),
+      modifications: 'simplified placeholder geometry',
+      intendedUsage: 'product viewer demo',
     },
   });
-  await tx.assetVersion.updateMany({ where: { assetId: asset.id, id: { not: version.id }, status: 'ACTIVE' }, data: { status: 'ARCHIVED' } });
+  await tx.assetVersion.updateMany({
+    where: { assetId: asset.id, id: { not: v2.id }, status: 'ACTIVE' },
+    data: { status: 'ARCHIVED' },
+  });
 
-  for (const [key, cam] of Object.entries(CAM)) {
-    await tx.meshMapping.upsert({
-      where: { versionId_meshName: { versionId: version.id, meshName: `zone_${key}` } },
-      update: { kind: 'zone', zoneId: zoneByKey[key].id, cameraPositionJson: cam.position, cameraTargetJson: cam.target },
-      create: { versionId: version.id, meshName: `zone_${key}`, kind: 'zone', zoneId: zoneByKey[key].id, cameraPositionJson: cam.position, cameraTargetJson: cam.target },
-    });
-  }
-  const partMappings = [
-    ['part_radiator_main', 'radiator-206'],
-    ['part_brake_pad_front_main', 'brake-pad-front-206'],
-    ['part_oil_filter_main', 'oil-filter-206'],
-    ['part_battery_main', 'battery-55ah'],
-    ['part_floor_mat_main', 'floor-mat-set-206'],
+  // (a) golden part/zone mappings on v2 — mirror of the canonical P2-F dev state.
+  const assemblyByZone = {
+    engine: 'assembly-engine', cooling: 'assembly-cooling', brakes: 'assembly-brakes',
+    suspension: 'assembly-suspension', wheels: 'assembly-wheels', body: 'assembly-body',
+    electrical: 'assembly-electrical', interior: 'assembly-interior',
+  };
+  const goldenZoneMappings = [
+    { meshName: 'zone_engine', key: 'engine', hotspot: null, sortOrder: 0 },
+    { meshName: 'zone_cooling', key: 'cooling', hotspot: [0, 0.62, 1.62], sortOrder: 1 },
+    { meshName: 'zone_brakes', key: 'brakes', hotspot: null, sortOrder: 2 },
+    { meshName: 'zone_suspension', key: 'suspension', hotspot: null, sortOrder: 3 },
+    { meshName: 'zone_wheels', key: 'wheels', hotspot: null, sortOrder: 4 },
+    { meshName: 'zone_body', key: 'body', hotspot: null, sortOrder: 5 },
+    { meshName: 'zone_electrical', key: 'electrical', hotspot: null, sortOrder: 6 },
+    { meshName: 'zone_interior', key: 'interior', hotspot: null, sortOrder: 7 },
   ];
-  for (const [meshName, slug] of partMappings) {
-    const part = partsBySlug[slug];
-    if (!part) continue;
+  const goldenPartMappings = [
+    { meshName: 'part_radiator_main', slug: 'radiator-assembly', hotspot: [0, 0.62, 1.62], sortOrder: 0 },
+    { meshName: 'part_oil_filter_main', slug: 'oil-filter', hotspot: [0.62, 0.45, 1.3], sortOrder: 0 },
+    { meshName: 'part_brake_pad_front_main', slug: 'front-brake-pad', hotspot: [0.62, 0.34, 1.15], sortOrder: 0 },
+    { meshName: 'part_battery_main', slug: 'battery-55ah', hotspot: [-0.45, 0.95, 1.2], sortOrder: 0 },
+    { meshName: 'part_floor_mat_main', slug: 'floor-mat-set-206', hotspot: [0, 1.12, -0.35], sortOrder: 0 },
+  ];
+  for (const zm of goldenZoneMappings) {
+    const assembly = await tx.assembly.findUnique({ where: { slug: assemblyByZone[zm.key] } });
     await tx.meshMapping.upsert({
-      where: { versionId_meshName: { versionId: version.id, meshName } },
-      update: { kind: 'part', partId: part.id },
-      create: { versionId: version.id, meshName, kind: 'part', partId: part.id },
+      where: { versionId_meshName: { versionId: v2.id, meshName: zm.meshName } },
+      update: { kind: 'zone', zoneId: zoneByKey[zm.key].id, assemblyId: assembly.id, hotspotJson: zm.hotspot, cameraPositionJson: CAM[zm.key].position, cameraTargetJson: CAM[zm.key].target, sortOrder: zm.sortOrder },
+      create: { versionId: v2.id, meshName: zm.meshName, kind: 'zone', zoneId: zoneByKey[zm.key].id, assemblyId: assembly.id, hotspotJson: zm.hotspot, cameraPositionJson: CAM[zm.key].position, cameraTargetJson: CAM[zm.key].target, sortOrder: zm.sortOrder },
     });
   }
+  for (const pm of goldenPartMappings) {
+    const part = await partBySlug(pm.slug);
+    await tx.meshMapping.upsert({
+      where: { versionId_meshName: { versionId: v2.id, meshName: pm.meshName } },
+      update: { kind: 'part', partId: part.id, hotspotJson: pm.hotspot, sortOrder: pm.sortOrder },
+      create: { versionId: v2.id, meshName: pm.meshName, kind: 'part', partId: part.id, hotspotJson: pm.hotspot, sortOrder: pm.sortOrder },
+    });
+  }
+
+  // (c) v1 stays as the archived demo placeholder fallback (builtin geometry).
+  await tx.assetVersion.upsert({
+    where: { assetId_version: { assetId: asset.id, version: 1 } },
+    update: { status: 'ARCHIVED' },
+    create: {
+      assetId: asset.id, version: 1, status: 'ARCHIVED', filePath: 'builtin:placeholder-206',
+      licenseType: 'IN_REPO_DEMO', commercialUse: true, creator: 'POOM (demo)',
+    },
+  });
 
   console.log(`✔ seed: vehicle=${vehicle.displayName} parts=${partCount} sellers=3 zones=${ZONES.length} categories=${Object.keys(CATEGORIES).length} brands=${BRANDS.length}`);
 }
