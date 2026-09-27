@@ -2,7 +2,7 @@
 // configuration by persisting binaries under public/ exactly as the pre-P2-H
 // upload route did. NEVER selected in production (see getAssetStorage()).
 import { AssetStorage, ObjectMeta, StoredObject, StorageError, assertSafeKey } from "./types";
-import { mkdir, writeFile, unlink, stat, readdir } from "node:fs/promises";
+import { mkdir, writeFile, unlink, stat, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 export class LocalDevelopmentStorage implements AssetStorage {
@@ -67,6 +67,16 @@ export class LocalDevelopmentStorage implements AssetStorage {
 
   async exists(key: string): Promise<boolean> {
     return (await this.metadata(key)) !== null;
+  }
+
+  /** P2-J: read the stored bytes back (dev mirrors the production contract). */
+  async download(key: string): Promise<Uint8Array> {
+    try {
+      return new Uint8Array(await readFile(this.abs(key)));
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new StorageError("OBJECT_NOT_FOUND", key);
+      throw new StorageError("STORAGE_UNAVAILABLE", e instanceof Error ? e.message : "read failed");
+    }
   }
 
   async metadata(key: string): Promise<ObjectMeta | null> {

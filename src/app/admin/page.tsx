@@ -79,7 +79,7 @@ export default async function AdminPage() {
               <Link href={`/admin/assets/${a.assetId}`} className="btn-ghost !px-2 !py-1 !text-xs">استودیو نگاشت</Link>
             </div>
             <div className="text-xs text-black/55">
-              نسخه فعال: {toPersianDigits(a.versions.find((v) => v.status === "ACTIVE")?.version ?? "—")} ·
+              نسخهٔ تولیدی: {toPersianDigits(a.versions.find((v) => v.state === "PRODUCTION")?.version ?? "—")} ·
               نگاشت ناحیه: {toPersianDigits(a.maps.filter((m) => m.kind === "zone").length)} ·
               نگاشت قطعه: {toPersianDigits(a.maps.filter((m) => m.kind === "part").length)}
             </div>

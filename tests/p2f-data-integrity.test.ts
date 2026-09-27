@@ -84,7 +84,7 @@ describe("P2-F F10: real 206 dataset integrity", () => {
     // Per ACTIVE version: v2 duplicates the mapping rows (full mapping copy),
     // so the table-wide count is 6 — the invariant is one triple per version.
     const activeVersion = await prisma.assetVersion.findFirst({
-      where: { status: "ACTIVE" },
+      where: { state: "PLACEHOLDER" },
       orderBy: { activatedAt: "desc" },
       select: { id: true },
     });

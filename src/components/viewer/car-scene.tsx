@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import * as THREE from "three";
 import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import type { AssetContractV2 } from "@/lib/asset-registry";
 import type { ZoneInfo } from "./vehicle-viewer";
 
@@ -155,6 +156,9 @@ function RealModel({
     const draco = new DRACOLoader();
     draco.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
     (loader as GLTFLoader).setDRACOLoader(draco);
+    // P2-J: the optimized artifact may use EXT_meshopt_compression. The decoder
+    // ships with three (no extra runtime fetch) and is harmless for plain files.
+    (loader as GLTFLoader).setMeshoptDecoder(MeshoptDecoder);
   }) as GLTF;
 
   useEffect(() => {
@@ -347,6 +351,18 @@ export function CarScene({
     window.history.replaceState(null, "", url.toString());
   };
 
+  // P2-J: what may be claimed about the focused part (see the availability block).
+  const focusMapping = focusPart ? contract?.parts.find((p) => p.meshName === focusPart) ?? null : null;
+  const availability = contract?.availability ?? {
+    vehicle3d: "UNAVAILABLE" as const,
+    zoneDisplay: "UNAVAILABLE" as const,
+  };
+  const partMappingState: "MAPPED" | "DEMO_ONLY" | "UNAVAILABLE" = focusMapping
+    ? availability.vehicle3d === "REAL" && focusMapping.trusted
+      ? "MAPPED"
+      : "DEMO_ONLY"
+    : "UNAVAILABLE";
+
   const zoneKeys = useMemo(() => new Set(contract?.zones.map((z) => z.zoneKey) ?? []), [contract]);
   const partByMesh = useMemo(() => new Map((contract?.parts ?? []).map((p) => [p.meshName, p])), [contract]);
 
@@ -507,19 +523,42 @@ export function CarScene({
           </div>
         </div>
       )}
-      {/* P2-F (F1): honest model-source + attribution line */}
-      <div className="pointer-events-none absolute bottom-3 right-3 max-w-[45%] text-right text-[10px] leading-4 text-black/45">
-        {realUrl && !glbFailed ? (
-          realMissing.length === 0 && realFound.size > 0 ? (
-            <>مدل واقعی نسخهٔ {contract?.versionNumber} · {contract?.license.attributionText ?? ""}</>
-          ) : (
-            <>مدل واقعی (جزئی) + نمونهٔ جایگزین</>
-          )
-        ) : realUrl && glbFailed ? (
-          <>بارگذاری مدل واقعی ناموفق بود — نمایش با نمونهٔ جایگزین</>
-        ) : (
-          <>نمونهٔ جایگزین (asset واقعی ثبت نشده است)</>
+      {/* P2-J (J25): truthful availability. Three separate facts — the 3D vehicle
+          model, the zone display, and whether THIS part really has a mesh mapping. */}
+      <div
+        className="pointer-events-none absolute bottom-3 right-3 max-w-[55%] space-y-0.5 text-right text-[10px] leading-4 text-black/55"
+        data-testid="availability"
+        data-vehicle3d={availability.vehicle3d}
+        data-zone-display={availability.zoneDisplay}
+        data-part-mapping={partMappingState}
+      >
+        <div>
+          سه‌بعدی خودرو:{" "}
+          {availability.vehicle3d === "REAL"
+            ? `موجود (مدل واقعی — نسخهٔ ${contract?.versionNumber ?? 0})`
+            : availability.vehicle3d === "PLACEHOLDER"
+              ? "موجود، ولی نمونهٔ جایگزین (مدل واقعی ثبت نشده است)"
+              : "ناموجود"}
+        </div>
+        <div>
+          نمایش ناحیه: {availability.zoneDisplay === "AVAILABLE" ? "موجود" : "ناموجود"}
+          {availability.zoneDisplay === "AVAILABLE" && availability.vehicle3d !== "REAL" ? " (آزمایشی)" : ""}
+        </div>
+        <div>
+          نمایش دقیق این قطعه:{" "}
+          {partMappingState === "MAPPED"
+            ? "موجود"
+            : partMappingState === "DEMO_ONLY"
+              ? "ناموجود — نگاشت آزمایشی روی نمونهٔ جایگزین"
+              : "ناموجود"}
+        </div>
+        {availability.vehicle3d === "REAL" && contract?.license.attributionText && (
+          <div dir="auto">{contract.license.attributionText}</div>
         )}
+        {realUrl && !glbFailed && realMissing.length > 0 && (
+          <div>{realMissing.length} ناحیه/قطعه در فایل مدل پیدا نشد — با نمونهٔ جایگزین نمایش داده می‌شود.</div>
+        )}
+        {realUrl && glbFailed && <div>بارگذاری مدل ناموفق بود — نمایش با نمونهٔ جایگزین</div>}
       </div>
       {loadingProgress < 100 && (
         <div className="absolute inset-x-0 top-0 h-1 bg-black/5">

@@ -102,6 +102,19 @@ export class SupabaseStorage implements AssetStorage {
     return (await this.metadata(key)) !== null;
   }
 
+  /** P2-J: read the stored bytes back so promotion validates what is served. */
+  async download(key: string): Promise<Uint8Array> {
+    assertSafeKey(key);
+    const resp = await fetch(`${this.base}/object/${this.bucket}/${encodeKeyPath(key)}`, {
+      method: "GET",
+      headers: this.headers(),
+    }).catch((e: unknown) => {
+      throw new StorageError("STORAGE_UNAVAILABLE", e instanceof Error ? e.message : "network error");
+    });
+    await unwrap(resp, "OBJECT_NOT_FOUND");
+    return new Uint8Array(await resp.arrayBuffer());
+  }
+
   async listKeys(prefix = ""): Promise<string[]> {
     const out: string[] = [];
     let offset = 0;

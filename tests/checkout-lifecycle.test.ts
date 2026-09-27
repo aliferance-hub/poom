@@ -336,11 +336,12 @@ describe("seller & admin visibility", () => {
     });
     expect(visibleToSeller).not.toBeNull();
 
-    // Count zone mappings on the ACTIVE asset version (v2 adds a second copy of
+    // Count zone mappings on the version the viewer serves (P2-J: the synthetic
+    // placeholder while no real asset is in PRODUCTION; v2 adds a second copy of
     // every mapping — the invariant is per-version, not per-table).
     const activeVersion = await prisma.assetVersion.findFirst({
-      where: { status: "ACTIVE" },
-      orderBy: { activatedAt: "desc" },
+      where: { state: "PLACEHOLDER" },
+      orderBy: { version: "desc" },
       select: { id: true },
     });
     const mappings = await prisma.meshMapping.count({

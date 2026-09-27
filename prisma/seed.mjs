@@ -8,10 +8,11 @@ const PROVENANCE_REF = 'public-206-maintenance-documentation';
 import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
-// P2-H (H14): production guard. This seed writes DEMO data and would flip the
-// active 3D asset version (v1 demo placeholder) over any real active version.
-// It must never run against a non-local database or in a production context —
-// unless explicitly forced with ALLOW_DEMO_SEED=1 (use with extreme care).
+// P2-H (H14)/P2-J: production guard. This seed writes DEMO data and would flip
+// the viewer's asset version back to the synthetic placeholder over any real
+// production asset. It must never run against a non-local database or in a
+// production context — unless explicitly forced with ALLOW_DEMO_SEED=1 (use
+// with extreme care).
 const __dbHost = (() => {
   try { return new URL(process.env.DATABASE_URL ?? '').hostname; } catch { return ''; }
 })();
@@ -543,8 +544,14 @@ const CATALOG = [
   // fallback. Single-active invariant preserved.
   const asset = await tx.asset.upsert({
     where: { assetId: 'peugeot-206-main-v1' },
-    update: {},
-    create: { assetId: 'peugeot-206-main-v1', vehicleId: vehicle.id, format: 'builtin', source: 'DEMO_PRIMITIVES' },
+    // P2-J: the in-repo engineering GLB is a SYNTHETIC stand-in, never the real
+    // vehicle. `kind` makes that a database fact instead of a convention.
+    update: { kind: 'SYNTHETIC' },
+    create: {
+      assetId: 'peugeot-206-main-v1', vehicleId: vehicle.id, format: 'builtin',
+      source: 'DEMO_PRIMITIVES', kind: 'SYNTHETIC',
+      licenseNote: 'DEMO — in-repo synthetic geometry (no third-party asset)',
+    },
   });
 
   const partBySlug = async (slug) => {
@@ -553,28 +560,36 @@ const CATALOG = [
     return p;
   };
 
-  // (b) tracked engineering GLB as v2 (ACTIVE) — filePath is the storage object key.
+  // (b) tracked engineering GLB as v2 — filePath is the storage object key.
+  // P2-J: the state is PLACEHOLDER, not PRODUCTION: this artifact is our own
+  // synthetic stand-in, and the viewer labels it as such. The size/checksum are
+  // the ACTUAL bytes of the tracked file (P2-J corrected a stale pair of values
+  // here — a seeded checksum that does not match the file is a lie the pipeline
+  // would later trip over).
   const V2_KEY = 'uploads/assets/peugeot-206-main-v1/v2/peugeot-206-engineering-v1.glb';
   const v2 = await tx.assetVersion.upsert({
     where: { assetId_version: { assetId: asset.id, version: 2 } },
-    update: { status: 'ACTIVE', activatedAt: new Date() },
+    update: { state: 'PLACEHOLDER', activatedAt: new Date() },
     create: {
-      assetId: asset.id, version: 2, status: 'ACTIVE', activatedAt: new Date(),
+      assetId: asset.id, version: 2, state: 'PLACEHOLDER', activatedAt: new Date(),
       filePath: V2_KEY,
       fileUrl: `/${V2_KEY}`,
-      fileSize: 1328846, mimeType: 'model/gltf-binary',
-      checksumSha256: '39d3d9d534b2c1e41523492273c37d16380973b2d54dd63d19c593507dbd243f',
-      licenseType: 'CC-BY-4.0', commercialUse: true,
-      creator: 'POOM demo engineering model',
+      fileSize: 1294156, mimeType: 'model/gltf-binary',
+      checksumSha256: '8c5c11e12abbfe8dde6bff17dd646cb5f8110420a34379b842fd4c270c36f4d8',
+      licenseType: 'IN_REPO_DEMO', commercialUse: true,
+      redistributionAllowed: true, modificationAllowed: true,
+      creator: 'POOM (in-repo synthetic engineering model)',
       sourceUrl: 'https://github.com/aliferance-hub/poom',
+      sourceProvider: 'POOM repository',
       acquiredAt: new Date('2026-09-20'),
-      modifications: 'simplified placeholder geometry',
-      intendedUsage: 'product viewer demo',
+      modifications: 'procedurally generated placeholder geometry (dimension-informed, not a third-party asset)',
+      intendedUsage: 'development placeholder viewer',
     },
   });
+  // P2-J: no version in the demo dataset may look like a production asset.
   await tx.assetVersion.updateMany({
-    where: { assetId: asset.id, id: { not: v2.id }, status: 'ACTIVE' },
-    data: { status: 'ARCHIVED' },
+    where: { assetId: asset.id, id: { not: v2.id }, state: 'PRODUCTION' },
+    data: { state: 'PLACEHOLDER' },
   });
 
   // (a) golden part/zone mappings on v2 — mirror of the canonical P2-F dev state.
@@ -617,13 +632,14 @@ const CATALOG = [
     });
   }
 
-  // (c) v1 stays as the archived demo placeholder fallback (builtin geometry).
+  // (c) v1 stays as the builtin placeholder fallback (primitive geometry).
   await tx.assetVersion.upsert({
     where: { assetId_version: { assetId: asset.id, version: 1 } },
-    update: { status: 'ARCHIVED' },
+    update: { state: 'PLACEHOLDER' },
     create: {
-      assetId: asset.id, version: 1, status: 'ARCHIVED', filePath: 'builtin:placeholder-206',
+      assetId: asset.id, version: 1, state: 'PLACEHOLDER', filePath: 'builtin:placeholder-206',
       licenseType: 'IN_REPO_DEMO', commercialUse: true, creator: 'POOM (demo)',
+      redistributionAllowed: true, modificationAllowed: true,
     },
   });
 

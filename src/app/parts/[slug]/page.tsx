@@ -63,7 +63,14 @@ export default async function PartPage({ params, searchParams }: Props) {
   const [contract, viewerZones] = vehicle
     ? await Promise.all([resolveContract(vehicle.id), getZonesForVehicle(vehicle.id)])
     : [null, []];
-  const focusPartMesh = contract?.parts.find((p) => p.partId === part.id)?.meshName ?? null;
+  const focusMapping = contract?.parts.find((p) => p.partId === part.id) ?? null;
+  const focusPartMesh = focusMapping?.meshName ?? null;
+  // J25: "mapped" requires a REAL production asset AND a healthy mapping.
+  const partMappingState: "MAPPED" | "DEMO_ONLY" | "UNAVAILABLE" = focusMapping
+    ? contract?.availability.vehicle3d === "REAL" && focusMapping.trusted
+      ? "MAPPED"
+      : "DEMO_ONLY"
+    : "UNAVAILABLE";
 
   // ── Fitment via THE engine (single source of compatibility truth) ──
   // Context priority: ?variant=<trim>&year=<year> URL override → active garage
@@ -209,12 +216,27 @@ export default async function PartPage({ params, searchParams }: Props) {
                 zones={viewerZones.map((z) => ({ key: z.key, title: z.title, description: z.description }))}
                 focusPart={focusPartMesh}
               />
-              {focusPartMesh && (
-                <div className="border-t border-black/8 px-4 py-2 text-[11px] text-black/50">
-                  این قطعه در جای خود روی ۲۰۶ — بقیهٔ خودرو به‌صورت شبح نمایش داده شده است. بچرخانید، بزرگ‌نمایی کنید، یا {""}
-                  <Link href="/vehicles/peugeot/206" className="text-[var(--color-accent)] underline">کل خودرو را ببینید</Link>.
-                </div>
-              )}
+              {/* P2-J (J25): never claim an exact 3D location unless a REAL
+                  production asset carries a healthy mapping for this part. */}
+              <div className="border-t border-black/8 px-4 py-2 text-[11px] text-black/50"
+                data-testid="part-3d-availability" data-status={partMappingState}>
+                {partMappingState === "MAPPED" ? (
+                  <>
+                    این قطعه در جای خود روی ۲۰۶ — بقیهٔ خودرو به‌صورت شبح نمایش داده شده است. بچرخانید، بزرگ‌نمایی کنید، یا {" "}
+                    <Link href="/vehicles/peugeot/206" className="text-[var(--color-accent)] underline">کل خودرو را ببینید</Link>.
+                  </>
+                ) : partMappingState === "DEMO_ONLY" ? (
+                  <>
+                    نمایش دقیق این قطعه در سه‌بعدی موجود نیست؛ آنچه می‌بینید یک نگاشت آزمایشی روی {" "}
+                    <span className="font-medium">نمونهٔ جایگزین</span> است و مکان واقعی قطعه نیست.{" "}
+                    <Link href="/vehicles/peugeot/206" className="text-[var(--color-accent)] underline">نمای کلی خودرو</Link>.
+                  </>
+                ) : (
+                  <>نمایش دقیق این قطعه در سه‌بعدی موجود نیست.{" "}
+                    <Link href="/vehicles/peugeot/206" className="text-[var(--color-accent)] underline">نمای کلی خودرو</Link>.
+                  </>
+                )}
+              </div>
             </div>
           )}
           <div className="card p-4">

@@ -54,13 +54,14 @@ export default async function AdminDataQualityPage() {
       take: 50,
     }),
     prisma.asset.findMany({ where: { versions: { none: {} } }, select: { assetId: true } }),
-    // published (ACTIVE) versions without complete provenance
+    // P2-J: live (PRODUCTION) versions without complete provenance/rights
     prisma.assetVersion.findMany({
       where: {
-        status: "ACTIVE",
+        state: "PRODUCTION",
         OR: [
           { licenseType: null }, { licenseType: "UNSPECIFIED" },
           { creator: null }, { acquiredAt: null }, { intendedUsage: null },
+          { redistributionAllowed: null }, { modificationAllowed: null },
         ],
       },
       select: { id: true, version: true, asset: { select: { assetId: true } } },
@@ -128,7 +129,7 @@ export default async function AdminDataQualityPage() {
           </ul>
         </Section>
 
-        <Section title="نسخه‌های فعال با provenance ناقص" count={assetsMissingProvenance.length}>
+        <Section title="نسخه‌های تولیدی با provenance ناقص" count={assetsMissingProvenance.length}>
           <ul className="mt-2 space-y-1 text-xs text-black/60" dir="ltr">
             {assetsMissingProvenance.map((v) => (
               <li key={v.id}>• {v.asset.assetId} v{v.version}</li>

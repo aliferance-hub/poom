@@ -5,7 +5,67 @@ import { StorageError, assertSafeKey, encodeKeyPath } from "@/lib/storage/types"
 import { setAssetStorageForTests, getAssetStorage } from "@/lib/storage";
 import { createAssetVersion } from "@/lib/asset-registry";
 import { reconcileStorage } from "@/lib/asset-reconciliation";
+/** Adapter-level bytes only: the storage provider does not parse GLB. */
 const GLB = Buffer.concat([Buffer.from("glTF"), Buffer.alloc(16, 0)]);
+
+/**
+ * P2-J: this file exercises storage mechanics, so the fixture is a minimal but
+ * CONTAINER-VALID GLB (a real triangle). The old 20-byte "glTF"+zeros buffer is
+ * no longer accepted anywhere in the pipeline — ingestion audits what it stores.
+ */
+function glbFixture(): Buffer {
+  const positions = Buffer.alloc(3 * 3 * 4);
+  const json = JSON.stringify({
+    asset: { version: "2.0", generator: "p2h-storage-test" },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ name: "Body", mesh: 0 }],
+    meshes: [{ name: "Body_Mesh", primitives: [{ attributes: { POSITION: 0 } }] }],
+    accessors: [{
+      bufferView: 0, componentType: 5126, count: 3, type: "VEC3",
+      min: [0, 0, 0], max: [1, 1, 0],
+    }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: positions.length }],
+    buffers: [{ byteLength: positions.length }],
+  });
+  const pad = (b: Buffer, fill: number) => (b.length % 4 === 0 ? b : Buffer.concat([b, Buffer.alloc(4 - (b.length % 4), fill)]));
+  const jsonChunk = pad(Buffer.from(json, "utf8"), 0x20);
+  const binChunk = pad(positions, 0);
+  const chunk = (type: string, data: Buffer) => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32LE(data.length, 0);
+    head.write(type, 4, 4, "latin1");
+    return Buffer.concat([head, data]);
+  };
+  const body = Buffer.concat([chunk("JSON", jsonChunk), chunk("BIN\0", binChunk)]);
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546c67, 0);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(12 + body.length, 8);
+  return Buffer.concat([header, body]);
+}
+
+/** Minimal complete provenance so the audit reaches the storage layer. */
+function p2jProvenance() {
+  return {
+    assetIdentity: "P2-H storage test fixture",
+    sourceUrl: "https://github.com/aliferance-hub/poom",
+    sourceProvider: "POOM test suite",
+    creator: "POOM test suite",
+    licenseType: "CC0-1.0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/",
+    commercialUse: "YES" as const,
+    redistributionAllowed: "YES" as const,
+    modificationAllowed: "YES" as const,
+    attributionText: "POOM test fixture (CC0)",
+    downloadDate: new Date().toISOString().slice(0, 10),
+    originalFilename: "p2h-fixture.glb",
+    intendedUsage: "storage adapter test",
+    modifications: null,
+    notes: null,
+    variantClaim: null,
+  };
+}
 
 /** Expects fn() to reject with a StorageError carrying `code` (or throw code directly). */
 async function expectStorageCode(fn: () => Promise<unknown> | unknown, code: string) {
@@ -33,7 +93,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const id of createdVersionIds) {
-    await prisma.assetVersion.deleteMany({ where: { id, status: { notIn: ["ACTIVE"] } } }).catch(() => {});
+    // Never delete a live production version; the suite's rows are RAW/REJECTED.
+    await prisma.assetVersion.deleteMany({ where: { id, state: { notIn: ["PRODUCTION"] } } }).catch(() => {});
   }
   createdVersionIds = [];
   setAssetStorageForTests(null);
@@ -114,15 +175,22 @@ describe("P2-H upload ↔ DB consistency (H8)", () => {
     const before = s.size;
     const v = await createAssetVersion({
       assetId: assetBusinessId,
-      fileBuffer: GLB,
+      fileBuffer: glbFixture(),
       fileName: "p2h-model.glb",
       mimeType: "model/gltf-binary",
-      license: { licenseType: "CC0", commercialUse: false },
+      provenance: p2jProvenance(),
     });
-    createdVersionIds.push(v.id);
+    if (!v.ok) throw new Error(`ingest failed: ${v.error}`);
+    createdVersionIds.push(v.versionId);
+    // The valid fixture must clear the ingestion audit, otherwise nothing is
+    // stored and this test would "pass" for the wrong reason.
+    if (v.outcome !== "RAW") throw new Error(`fixture rejected: ${v.audit.problems.map((p) => p.code).join(",")}`);
+    expect(getAssetStorage()).toBe(s);
     expect(s.size).toBe(before + 1);
-    expect(v.filePath).toMatch(/^uploads\/assets\/peugeot-206-main-v1\/v\d+\/p2h-model\.glb$/);
-    expect(v.fileUrl).toBe(`/${v.filePath}`);
+    const row = await prisma.assetVersion.findUniqueOrThrow({ where: { id: v.versionId } });
+    expect(row.filePath).toMatch(/^uploads\/assets\/peugeot-206-main-v1\/v\d+\/raw\/p2h-model\.glb$/);
+    expect(row.fileUrl).toBe(`/${row.filePath}`);
+    expect(row.state).toBe("RAW");
   });
 
   it("compensates: DB failure after successful upload removes the orphan object", async () => {
@@ -140,9 +208,9 @@ describe("P2-H upload ↔ DB consistency (H8)", () => {
         () =>
           createAssetVersion({
             assetId: assetBusinessId,
-            fileBuffer: GLB,
+            fileBuffer: glbFixture(),
             fileName: "orphan.glb",
-            license: { licenseType: "CC0", commercialUse: false },
+            provenance: p2jProvenance(),
           }),
         "SIMULATED_DB_FAILURE",
       );
@@ -173,31 +241,34 @@ describe("P2-H reconciliation checks (H8)", () => {
   it("reports clean when everything matches", async () => {
     const v = await createAssetVersion({
       assetId: assetBusinessId,
-      fileBuffer: GLB,
+      fileBuffer: glbFixture(),
       fileName: "recon.glb",
       mimeType: "model/gltf-binary",
-      license: { licenseType: "CC0", commercialUse: false },
+      provenance: p2jProvenance(),
     });
-    createdVersionIds.push(v.id);
+    if (!v.ok) throw new Error(`ingest failed: ${v.error}`);
+    createdVersionIds.push(v.versionId);
     await backfillExistingObjects();
     const report = await reconcileStorage();
     expect(report.assetVersionsWithoutStorage).toEqual([]);
     expect(report.storageObjectsWithoutAssetVersion).toEqual([]);
-    expect(report.activeAssetsWithoutStorage).toEqual([]);
+    expect(report.productionVersionsWithoutStorage).toEqual([]);
   });
 
   it("detects a DB row whose storage object is missing", async () => {
     const v = await createAssetVersion({
       assetId: assetBusinessId,
-      fileBuffer: GLB,
+      fileBuffer: glbFixture(),
       fileName: "ghosted.glb",
       mimeType: "model/gltf-binary",
-      license: { licenseType: "CC0", commercialUse: false },
+      provenance: p2jProvenance(),
     });
-    createdVersionIds.push(v.id);
-    await getAssetStorage().delete(v.filePath!); // simulate lost object
+    if (!v.ok) throw new Error(`ingest failed: ${v.error}`);
+    createdVersionIds.push(v.versionId);
+    const row = await prisma.assetVersion.findUniqueOrThrow({ where: { id: v.versionId } });
+    await getAssetStorage().delete(row.filePath); // simulate lost object
     const report = await reconcileStorage();
-    expect(report.assetVersionsWithoutStorage).toContain(v.id);
+    expect(report.assetVersionsWithoutStorage).toContain(v.versionId);
   });
 
   it("detects an orphaned storage object", async () => {

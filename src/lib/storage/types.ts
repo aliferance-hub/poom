@@ -25,6 +25,8 @@ export interface AssetStorage {
   /** Signed RESUMABLE upload URL for large files (H6); null when unsupported. */
   createSignedUploadUrl(key: string, expiresInSec: number): Promise<string | null>;
   exists(key: string): Promise<boolean>;
+  /** Read an object back (P2-J: promotion re-validates the stored bytes). */
+  download(key: string): Promise<Uint8Array>;
   metadata(key: string): Promise<ObjectMeta | null>;
   /** All object keys under a prefix (recursive) — reconciliation support (H8). */
   listKeys(prefix?: string): Promise<string[]>;

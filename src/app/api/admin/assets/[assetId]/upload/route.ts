@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createAssetVersion } from "@/lib/asset-registry";
+import { createAssetVersion, type ProvenanceInput } from "@/lib/asset-registry";
 import { requireAdmin, isDemoAuthEnabled } from "@/lib/auth/identity";
 import { StorageError } from "@/lib/storage/types";
 
@@ -7,8 +7,9 @@ export const runtime = "nodejs";
 
 // P2-H (H6): Vercel caps a serverless function request body at 4.5 MB — files
 // above ~4.4 MB can never arrive here regardless of our own cap. The route
-// threshold is therefore 4 MB; anything larger uses the resumable (TUS) path
-// to Supabase Storage (docs/phase2/PHASE2-H-STORAGE.md §7).
+// threshold is therefore 4 MB; larger sources are ingested through the P2-J CLI
+// (`scripts/p2j-asset-pipeline.mts ingest`), which streams from disk to the
+// Storage API instead of through a function body.
 const MAX_GLB_BYTES = 4 * 1024 * 1024;
 
 function isGlb(buf: Buffer): boolean {
@@ -16,20 +17,18 @@ function isGlb(buf: Buffer): boolean {
 }
 
 /**
- * P2-H (H19 hardening): the upload boundary is ADMIN-SESSION-first and fails
- * closed. The demo gate is allowed only when demo auth is genuinely enabled
- * for the environment — a production build with MOCK_PAYMENTS=1 alone (the old
- * assertDemoTrust path) no longer opens this route. Misconfiguration and
- * absence of identity both yield a bare 401; no provider details leak.
+ * P2-H (H19 hardening)/P2-J: ADMIN-SESSION-first, fails closed. This route now
+ * only performs RAW ingestion — a file that passes the audit waits in RAW state
+ * until an operator (or the CLI) runs it through the promotion pipeline.
  */
 async function assertAdminOrDemo(): Promise<void> {
   const admin = await requireAdmin();
   if (admin) return;
-  // Throws CONFIG_ERROR in a production build with demo auth enabled and no
-  // explicit ALLOW_DEMO_IN_PRODUCTION=1 — that exception must fail closed too.
   if (isDemoAuthEnabled()) return;
   throw new Error("AUTH_REQUIRED");
 }
+
+const TRI: ("YES" | "NO" | "UNKNOWN")[] = ["YES", "NO", "UNKNOWN"];
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ assetId: string }> }) {
   try {
@@ -51,7 +50,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ assetId: s
   }
   if (file.size > MAX_GLB_BYTES) {
     return NextResponse.json(
-      { error: "FILE_TOO_LARGE", maxBytes: MAX_GLB_BYTES, hint: "use resumable upload for large assets" },
+      { error: "FILE_TOO_LARGE", maxBytes: MAX_GLB_BYTES, hint: "use the P2-J CLI ingestion path for large source files" },
       { status: 413 },
     );
   }
@@ -61,52 +60,70 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ assetId: s
     return NextResponse.json({ error: "NOT_A_GLB", hint: "glTF-binary magic bytes (glTF) required" }, { status: 415 });
   }
 
-  // P2-F (F1): full provenance capture. Missing values stay null/UNSPECIFIED —
-  // never fabricated — and validateVersion() will REJECT an upload that claims
-  // to be a real asset without complete provenance.
-  const acquiredAtRaw = String(form.get("acquiredAt") ?? "").trim();
-  const acquiredAt = acquiredAtRaw ? new Date(acquiredAtRaw) : null;
-  if (acquiredAtRaw && (!acquiredAt || isNaN(acquiredAt.getTime()))) {
-    return NextResponse.json({ error: "BAD_ACQUIRED_AT", hint: "ISO-8601 date expected" }, { status: 400 });
-  }
-  const license = {
-    licenseType: String(form.get("licenseType") ?? "") || "UNSPECIFIED",
-    licenseUrl: String(form.get("licenseUrl") ?? "") || undefined,
-    sourceUrl: String(form.get("sourceUrl") ?? "") || undefined,
-    creator: String(form.get("creator") ?? "") || undefined,
-    attributionText: String(form.get("attributionText") ?? "") || undefined,
-    commercialUse: String(form.get("commercialUse") ?? "") === "true",
-    acquiredAt,
-    modifications: String(form.get("modifications") ?? "") || undefined,
-    intendedUsage: String(form.get("intendedUsage") ?? "") || undefined,
+  // P2-J (§5): every field is captured verbatim; a missing value is passed on as
+  // UNKNOWN/empty and the audit decides whether the file may be stored at all.
+  const text = (key: string): string => String(form.get(key) ?? "").trim();
+  const tri = (key: string): "YES" | "NO" | "UNKNOWN" => {
+    const raw = text(key).toUpperCase();
+    return (TRI as string[]).includes(raw) ? (raw as "YES" | "NO" | "UNKNOWN") : "UNKNOWN";
   };
 
-  // P2-H (H5): storage owns the binary — the adapter persists it (Supabase
-  // Storage in production, public/ under local dev). This route no longer
-  // touches the filesystem and is durable on Vercel.
-  let version;
+  const downloadDate = text("downloadDate") || text("acquiredAt");
+  const provenance: ProvenanceInput = {
+    assetIdentity: text("assetIdentity"),
+    sourceUrl: text("sourceUrl"),
+    sourceProvider: text("sourceProvider"),
+    creator: text("creator") || null,
+    licenseType: text("licenseType"),
+    licenseUrl: text("licenseUrl") || null,
+    commercialUse: tri("commercialUse"),
+    redistributionAllowed: tri("redistributionAllowed"),
+    modificationAllowed: tri("modificationAllowed"),
+    attributionText: text("attributionText") || null,
+    downloadDate,
+    originalFilename: file.name,
+    intendedUsage: text("intendedUsage"),
+    modifications: text("modifications") || null,
+    notes: text("notes") || null,
+    variantClaim: text("variantClaim") || null,
+  };
+
   try {
-    version = await createAssetVersion({ assetId, fileBuffer: buf, fileName: file.name, mimeType: file.type || undefined, license });
+    const result = await createAssetVersion({
+      assetId,
+      fileBuffer: buf,
+      fileName: file.name,
+      mimeType: file.type || undefined,
+      provenance,
+      actor: "admin:upload-route",
+    });
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: result.error === "ASSET_NOT_FOUND" ? 404 : 502 });
+    }
+    const errorProblems = result.audit.problems.filter((p) => p.severity === "error");
+    const status = result.outcome === "RAW" ? 201 : 422;
+    return NextResponse.json(
+      {
+        versionId: result.versionId,
+        version: result.version,
+        outcome: result.outcome, // RAW = stored and awaiting the pipeline, REJECTED = never stored
+        auditVerdict: result.audit.verdict,
+        sha256: result.audit.sha256,
+        fileSize: result.audit.byteLength,
+        counts: result.audit.counts,
+        metrics: result.audit.metrics,
+        problems: errorProblems.map((p) => `${p.code}${p.where ? `:${p.where}` : ""}`),
+        provenanceVerdict: result.audit.provenance,
+        rights: result.audit.rights,
+        note: "RAW ingestion only: validation, optimization, staging and promotion run through the P2-J pipeline.",
+      },
+      { status },
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "ERROR";
     if (e instanceof StorageError || msg.startsWith("STORAGE_") || msg === "INVALID_KEY" || msg === "OBJECT_EXISTS") {
       return NextResponse.json({ error: msg }, { status: 502 });
     }
-    return NextResponse.json({ error: msg }, { status: msg === "ASSET_NOT_FOUND" ? 404 : 500 });
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
-
-  const provenanceComplete = Boolean(
-    version.licenseType && version.licenseType !== "UNSPECIFIED" &&
-    version.creator && version.acquiredAt && version.intendedUsage,
-  );
-  return NextResponse.json({
-    versionId: version.id,
-    version: version.version,
-    status: version.status,
-    checksum: version.checksumSha256,
-    fileSize: version.fileSize,
-    licenseType: version.licenseType,
-    commercialUse: version.commercialUse,
-    provenanceComplete, // incomplete provenance cannot pass validateVersion
-  }, { status: 201 });
 }

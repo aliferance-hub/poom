@@ -37,6 +37,13 @@ export class InMemoryStorage implements AssetStorage {
     return this.objects.has(assertSafeKey(key));
   }
 
+  /** P2-J: read the stored bytes back. */
+  async download(key: string): Promise<Uint8Array> {
+    const hit = this.objects.get(assertSafeKey(key));
+    if (!hit) throw new StorageError("OBJECT_NOT_FOUND", key);
+    return hit.data.slice();
+  }
+
   async metadata(key: string): Promise<ObjectMeta | null> {
     const hit = this.objects.get(assertSafeKey(key));
     if (!hit) return null;

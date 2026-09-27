@@ -624,51 +624,117 @@ model Asset {
   format      String         @default("glb")
   source      String         @default("DEMO_PRIMITIVES") // no external asset claims
   licenseNote String         @default("DEMO — in-repo primitive geometry, no third-party asset")
+  /// P2-J (J22): SYNTHETIC assets may never be promoted as the real vehicle.
+  /// A REAL asset needs a documented third-party license or an owned original.
+  kind        AssetKind      @default(SYNTHETIC)
   versions    AssetVersion[]
+  events      AssetEventLog[]
 }
 
-enum AssetVersionStatus {
-  DRAFT
-  PROCESSING
-  READY
-  ACTIVE
-  ARCHIVED
+enum AssetKind {
+  SYNTHETIC
+  REAL
+}
+
+/// P2-J (§22/§28): the only lifecycle states an asset version may hold.
+/// PLACEHOLDER never becomes PRODUCTION — a synthetic stand-in stays a stand-in.
+/// Promotion runs RAW → VALIDATED → OPTIMIZED → STAGED → VERIFIED → PRODUCTION;
+/// RETIRED keeps history/rollback, REJECTED records a refused artifact.
+enum AssetVersionState {
+  PLACEHOLDER
+  RAW
+  VALIDATED
+  OPTIMIZED
+  STAGED
+  VERIFIED
+  PRODUCTION
+  RETIRED
   REJECTED
 }
 
 /// Phase 2 (P2-A): versioned, licensable 3D assets.
 /// builtin:placeholder geometry and uploaded GLB files share one model.
 model AssetVersion {
-  id              String             @id @default(cuid())
+  id              String            @id @default(cuid())
   assetId         String
-  asset           Asset              @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  asset           Asset             @relation(fields: [assetId], references: [id], onDelete: Cascade)
   version         Int
-  status          AssetVersionStatus @default(DRAFT)
-  // File info — builtin geometry has filePath `builtin:*`, no physical file.
-  filePath        String             @default("builtin:placeholder-206")
+  /// P2-J: single lifecycle state (see AssetVersionState).
+  state           AssetVersionState @default(RAW)
+  // File info — `filePath` is the artifact the viewer consumes: the raw file
+  // until an optimization is measured and validated, then the optimized object.
+  // builtin geometry has filePath `builtin:*` (no physical file).
+  filePath        String            @default("builtin:placeholder-206")
   fileUrl         String?
   previewUrl      String?
   fileSize        Int?
   mimeType        String?
   checksumSha256  String?
+  // P2-J: the immutable raw artifact stays addressable after optimization.
+  rawFilePath     String?
+  rawFileSize     Int?
+  rawChecksumSha256 String?
   // Licensing metadata (mandatory before any commercial use)
   licenseType     String?
   licenseUrl      String?
   sourceUrl       String?
+  sourceProvider  String?
   creator         String?
   attributionText String?
-  commercialUse   Boolean            @default(false)
+  commercialUse   Boolean           @default(false)
+  // P2-J (J1/§5): the rights tri-state is stored verbatim, UNKNOWN included.
+  redistributionAllowed Boolean?
+  modificationAllowed   Boolean?
   // P2-F (F1): full provenance — a real asset must answer where it came from,
   // what was changed, and what it may be used for. Validated before READY.
   acquiredAt      DateTime? // when the file was obtained/produced
   modifications   String? // what was altered after acquisition (null = none declared)
   intendedUsage   String? // e.g. "product viewer" — declared scope of use
-  createdAt       DateTime           @default(now())
+  // P2-J (J3/J4/J5): machine-readable evidence produced by the pipeline.
+  validationJson    Json? // summarizeAudit() of the current artifact
+  rawValidationJson Json? // summarizeAudit() of the raw artifact (immutable evidence)
+  optimizationJson  Json? // measured before/after deltas + optimizer settings
+  provenanceJson    Json? // the full ProvenanceRecord as ingested (unknowns included)
+  metadataJson      Json? // source metadata: original filename, download date, metadata URLs
+  validatedAt     DateTime?
+  optimizedAt     DateTime?
+  stagedAt        DateTime?
+  verifiedAt      DateTime?
+  promotedAt      DateTime?
+  verifiedBy      String? // who/what produced the render/browser verification evidence
+  promotionNote   String?
+  rejectionReason String?
+  createdAt       DateTime          @default(now())
   activatedAt     DateTime?
   meshMappings    MeshMapping[]
+  events          AssetEventLog[]
 
   @@unique([assetId, version])
-  @@index([assetId, status])
+  @@index([assetId, state])
+}
+
+/// P2-J (J13/§29): append-only audit trail for the asset pipeline. Every state
+/// change, promotion, rollback and mapping surgery lands here — the same pattern
+/// CatalogEventLog uses for catalog verification (P2-I).
+model AssetEventLog {
+  id        String   @id @default(cuid())
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  versionId String?
+  version   AssetVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  /// created | validated | rejected | optimized | staged | verified | promoted |
+  /// retired | rolled_back | mapping_assigned | mapping_removed | health_checked
+  event     String
+  fromState String?
+  toState   String?
+  actor     String
+  note      String?
+  detailJson Json?
+  createdAt DateTime @default(now())
+
+  @@index([assetId, createdAt])
+  @@index([event])
+  @@index([versionId])
 }
 
 // Phase 2 (P2-A): one unified, version-scoped mesh mapping table.
@@ -680,6 +746,13 @@ model MeshMapping {
   version   AssetVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
   meshName  String // stable name from the 3D scene, e.g. zone_engine / part_radiator_main
   kind      String       @default("zone") // zone | assembly | part
+  /// P2-J (§27): structural fingerprint of the mapped node as measured when the
+  /// mapping was made. Drift detection compares it with the version's current
+  /// inventory: a missing node is INVALID, a changed fingerprint NEEDS_REVIEW.
+  meshFingerprint String?
+  /// Cached result of the last health check (MAPPING_VALID/NEEDS_REVIEW/INVALID).
+  mappingHealth   String?
+  healthCheckedAt DateTime?
 
   zoneId     String?
   zone       VehicleZone? @relation(fields: [zoneId], references: [id])
