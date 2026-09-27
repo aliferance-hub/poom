@@ -83,9 +83,13 @@ describe("P2-F F10: real 206 dataset integrity", () => {
   it("the three real engine-bay meshes resolve to the real imported parts", async () => {
     // Per ACTIVE version: v2 duplicates the mapping rows (full mapping copy),
     // so the table-wide count is 6 — the invariant is one triple per version.
+    // The version that carries the real imported catalog mappings is the tracked
+    // engineering GLB (v2) — the builtin primitive stand-in has none. Select it
+    // explicitly: `activatedAt` can be NULL, and a DESC ordering would put those
+    // rows first (NULLS FIRST), which would silently pick the wrong version.
     const activeVersion = await prisma.assetVersion.findFirst({
-      where: { state: "PLACEHOLDER" },
-      orderBy: { activatedAt: "desc" },
+      where: { state: "PLACEHOLDER", filePath: { not: { startsWith: "builtin:" } } },
+      orderBy: { version: "desc" },
       select: { id: true },
     });
     const meshes = await prisma.meshMapping.findMany({
