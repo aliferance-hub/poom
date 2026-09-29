@@ -70,6 +70,12 @@ the file themselves into `.freebuff/asset-inbox/`; the pipeline after that is
 automated.** Nothing has been downloaded yet, so no license claim was made and no
 variant (تیپ ۵) was inferred anywhere.
 
+**Update 2026-09-29 (J1 re-run):** the owner rejected C1 on visual fidelity; a fresh
+candidate sweep re-ranked the accepted set to C10 `2a41b3b9…` (rank 1), C5 `44ac8a85…`
+(rank 2, likely duplicate of C10), C2 (rank 3), C3 (rank 4), C4 (rank 5, backup) —
+all Sketchfab CC-BY; C11–C13 were inspected and rejected (low fidelity / no license
+stated / non-standard WRC photogrammetry). See `PHASE2-J-ASSET-SOURCE-REPORT.md` §6.1.
+
 ## C. Verification performed
 
 * **Suite**: 19 files / 272 tests green (local golden DB), incl.
