@@ -272,10 +272,16 @@ promotion when a gate fails.
 
 ## 14. Known limitations
 
-* The production database has **not** yet received the `20260927_p2j_asset_lifecycle`
-  migration (applied locally only) — see `PHASE2-J-FINAL-REPORT.md`.
+* The migration is **phase 1 of 2** by design: `20260927_p2j_asset_lifecycle` is
+  additive and keeps the legacy `status` column (nullable) so the code that was
+  live while it was applied keeps working. Phase 2 — dropping
+  `AssetVersionStatus`, the column and its index — is a separate migration in a
+  later release, after the P2-J code is confirmed live (P2-H runbook §7). Until
+  then `prisma migrate diff` will report exactly that one difference.
 * The Supabase service-role key is not readable in this environment, so the
-  production bucket backfill of the tracked v2 object is still pending.
+  production bucket backfill of the tracked v2 object is still pending; the
+  viewer reads the tracked static path meanwhile (`deriveFileUrl` falls back
+  after a failed storage check, and the object loads with HTTP 200 in production).
 * No real, rights-documented Peugeot 206 file has reached the pipeline yet; the
   real-asset gates (J2–J10) therefore remain unexercised outside of tests, and the
   final status is `BLOCKED` on that single external dependency.
