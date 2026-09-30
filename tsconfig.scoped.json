@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/app/vehicles/peugeot/pars/**/*.ts",
+    "src/app/vehicles/peugeot/pars/**/*.tsx",
+    "src/components/viewer/vehicle-viewer.tsx",
+    "src/components/viewer/car-scene.tsx",
+    "src/app/layout.tsx",
+    "src/app/page.tsx"
+  ]
+}

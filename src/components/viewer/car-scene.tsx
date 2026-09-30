@@ -310,12 +310,14 @@ function placeholderShape(meshName: string): { position: CamVec; size: CamVec; c
 }
 
 export function CarScene({
-  contract, zones, focusPart, onWebglFail,
+  contract, zones, focusPart, onWebglFail, vehicleBasePath = "/vehicles/peugeot/206",
 }: {
   contract: AssetContractV2 | null;
   zones: ZoneInfo[];
   focusPart?: string | null;
   onWebglFail?: () => void;
+  /** Base path for zone deep-links; defaults to the historical 206 pages. */
+  vehicleBasePath?: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -516,7 +518,7 @@ export function CarScene({
         <div className="absolute right-3 top-3 w-56 rounded-lg bg-white/95 p-3 text-sm shadow" data-testid="zone-panel">
           <div className="font-semibold">{zoneTitle(activeZone)}</div>
           <div className="mt-2 flex flex-col gap-1">
-            <button onClick={() => router.push(`/vehicles/peugeot/206/zone/${activeZone}`)} className="btn-primary !px-2 !py-1 !text-xs">
+            <button onClick={() => router.push(`${vehicleBasePath}/zone/${activeZone}`)} className="btn-primary !px-2 !py-1 !text-xs">
               مشاهده قطعات این ناحیه
             </button>
             <button onClick={() => selectZone(activeZone)} className="btn-ghost !px-2 !py-1 !text-xs">بستن</button>

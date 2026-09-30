@@ -16,13 +16,15 @@ const CarScene = dynamic(() => import("./car-scene").then((m) => m.CarScene), {
 });
 
 export function VehicleViewer({
-  contract, zones, variantId, focusPart,
+  contract, zones, variantId, focusPart, vehicleBasePath = "/vehicles/peugeot/206",
 }: {
   contract: AssetContract | null;
   zones: ZoneInfo[];
   variantId?: string;
   /** PDP focus mode: meshName of the part to highlight (car renders as ghost). */
   focusPart?: string | null;
+  /** Base path for zone deep-links; defaults to the historical 206 pages. */
+  vehicleBasePath?: string;
 }) {
   const [failed, setFailed] = useState(false);
 
@@ -34,7 +36,7 @@ export function VehicleViewer({
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {zones.map((z) => (
-            <a key={z.key} href={`/vehicles/peugeot/206/zone/${z.key}`}
+            <a key={z.key} href={`${vehicleBasePath}/zone/${z.key}`}
               className="rounded-lg border border-black/8 p-2 text-center text-sm hover:bg-black/3">
               {z.title}
             </a>
@@ -47,5 +49,13 @@ export function VehicleViewer({
     );
   }
 
-  return <CarScene contract={contract} zones={zones} focusPart={focusPart} onWebglFail={() => setFailed(true)} />;
+  return (
+    <CarScene
+      contract={contract}
+      zones={zones}
+      focusPart={focusPart}
+      vehicleBasePath={vehicleBasePath}
+      onWebglFail={() => setFailed(true)}
+    />
+  );
 }

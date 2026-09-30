@@ -25,6 +25,7 @@ export default async function HomePage() {
             </p>
             <div className="flex flex-wrap gap-2 pt-1">
               <Link href="/vehicles/peugeot/206" className="btn-primary">خودرویت را انتخاب کن</Link>
+              <Link href="/vehicles/peugeot/pars" className="btn-ghost !border-white/20 !bg-white/10 !text-white">پژو پارس</Link>
               <Link href="/search" className="btn-ghost !border-white/20 !bg-white/10 !text-white">جستجوی قطعه</Link>
             </div>
             {activeVehicle && (

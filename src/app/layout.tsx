@@ -30,6 +30,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </Link>
             <nav className="hidden items-center gap-4 text-sm text-white/80 md:flex">
               <Link href="/vehicles/peugeot/206" className="hover:text-white">پژو ۲۰۶</Link>
+              <Link href="/vehicles/peugeot/pars" className="hover:text-white">پژو پارس</Link>
               <Link href="/search" className="hover:text-white">جستجو</Link>
               <Link href="/seller" className="hover:text-white">پنل فروشنده</Link>
               <Link href="/admin" className="hover:text-white">ادمین</Link>
